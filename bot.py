@@ -245,11 +245,11 @@ def update_rss(title, video_url, video_filename):
     # GitHub raw URL for the video
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
     
-    # IMPORTANT: link = raw_url (GitHub raw), enclosure_url = video_url (Telegram original)
+    # link = raw_url (GitHub), enclosure_url = video_url (Telegram), guid = video_url (Telegram)
     new_item = {
         'title': title,
-        'link': raw_url,           # ← رابط GitHub raw للمقطع
-        'enclosure_url': video_url, # ← رابط Telegram الأصلي
+        'link': raw_url,           # ← رابط GitHub raw
+        'enclosure_url': video_url, # ← رابط Telegram
         'pub_date': get_algeria_time()
     }
     
@@ -275,7 +275,7 @@ def update_rss(title, video_url, video_filename):
         ET.SubElement(elem, 'link').text = item['link']           # GitHub raw URL
         ET.SubElement(elem, 'pubDate').text = item['pub_date']
         ET.SubElement(elem, 'enclosure', url=item['enclosure_url'], type='video/mp4')  # Telegram URL
-        ET.SubElement(elem, 'guid', isPermaLink='false').text = item['link']  # GitHub raw URL
+        ET.SubElement(elem, 'guid', isPermaLink='false').text = item['enclosure_url']  # Telegram URL
     
     xml_str = minidom.parseString(ET.tostring(rss)).toprettyxml(indent="  ")
     xml_lines = [line for line in xml_str.split('\n') if line.strip()]
