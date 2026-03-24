@@ -34,24 +34,19 @@ MAX_VIDEOS_CHECK = 20
 # ============================================
 
 def get_last_post_number():
-    """قراءة آخر رقم من الملف، مع طباعة القيمة الفعلية"""
     if not os.path.exists(PROCESSED_LOG):
-        print("⚠️ lastURL.txt not found, using 0")
         return 0
     try:
         with open(PROCESSED_LOG, "r", encoding="utf-8") as f:
             content = f.read().strip()
-            number = int(content) if content else 0
-            print(f"📖 Read lastURL.txt: {number}")
-            return number
-    except Exception as e:
-        print(f"⚠️ Error reading lastURL.txt: {e}")
+            return int(content) if content else 0
+    except:
         return 0
 
 def save_last_post_number(number):
     with open(PROCESSED_LOG, "w", encoding="utf-8") as f:
         f.write(str(number))
-        print(f"💾 Saved lastURL.txt: {number}")
+        print(f"💾 Saved: {number}")
 
 def extract_post_number(link):
     try:
@@ -64,20 +59,29 @@ def get_algeria_time():
     return datetime.now(tz).strftime('%a, %d %b %Y %H:%M:%S +0100')
 
 def git_push_all(commit_msg):
+    """Commit all changes and push to GitHub (one shot)"""
     try:
         subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], check=True, capture_output=True)
         subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], check=True, capture_output=True)
         
+        # Add all changes
         subprocess.run(['git', 'add', '-A'], check=True, capture_output=True)
         
+        # Check if there are changes to commit
         result = subprocess.run(['git', 'diff', '--cached', '--quiet'], capture_output=True)
         if result.returncode == 0:
             print("📝 No changes to commit")
             return True
         
+        # Commit
         subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
+        
+        # Pull with rebase to avoid conflicts
         subprocess.run(['git', 'pull', '--rebase', 'origin', GITHUB_BRANCH], check=True, capture_output=True)
+        
+        # Push
         subprocess.run(['git', 'push', 'origin', GITHUB_BRANCH], check=True, capture_output=True)
+        
         print(f"✅ Pushed: {commit_msg}")
         return True
     except Exception as e:
