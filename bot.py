@@ -34,25 +34,20 @@ MAX_VIDEOS_CHECK = 20
 # ============================================
 
 def get_last_post_number():
-    """Get last processed post number from file"""
     if not os.path.exists(PROCESSED_LOG):
         return 0
     try:
         with open(PROCESSED_LOG, "r", encoding="utf-8") as f:
             content = f.read().strip()
-            if content:
-                return int(content)
-            return 0
+            return int(content) if content else 0
     except:
         return 0
 
 def save_last_post_number(number):
-    """Save last processed post number to file"""
     with open(PROCESSED_LOG, "w", encoding="utf-8") as f:
         f.write(str(number))
 
 def extract_post_number(link):
-    """Extract post number from Telegram link (e.g., /26 -> 26)"""
     try:
         return int(link.split('/')[-1])
     except:
@@ -62,18 +57,34 @@ def get_algeria_time():
     tz = pytz.timezone('Africa/Algiers')
     return datetime.now(tz).strftime('%a, %d %b %Y %H:%M:%S +0100')
 
-def git_commit(file_path, commit_msg):
-    """Commit file to git"""
+def git_commit_all(commit_msg):
+    """Commit all changes at once and push"""
     try:
         subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], check=True, capture_output=True)
         subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], check=True, capture_output=True)
-        subprocess.run(['git', 'add', file_path], check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', commit_msg, '--allow-empty'], check=True, capture_output=True)
-        subprocess.run(['git', 'push'], check=True, capture_output=True)
-        print(f"✅ Committed: {file_path}")
+        
+        # Add all changed files
+        subprocess.run(['git', 'add', VIDEOS_DIR, RSS_FILE, PROCESSED_LOG], check=True, capture_output=True)
+        
+        # Check if there are changes to commit
+        result = subprocess.run(['git', 'diff', '--cached', '--quiet'], capture_output=True)
+        if result.returncode == 0:
+            print("📝 No changes to commit")
+            return True
+        
+        # Commit
+        subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
+        
+        # Pull with rebase to avoid conflicts
+        subprocess.run(['git', 'pull', '--rebase', 'origin', GITHUB_BRANCH], check=True, capture_output=True)
+        
+        # Push
+        subprocess.run(['git', 'push', 'origin', GITHUB_BRANCH], check=True, capture_output=True)
+        
+        print(f"✅ Committed and pushed: {commit_msg}")
         return True
     except Exception as e:
-        print(f"❌ Commit failed: {e}")
+        print(f"❌ Git failed: {e}")
         return False
 
 # ============================================
@@ -81,7 +92,6 @@ def git_commit(file_path, commit_msg):
 # ============================================
 
 def fetch_latest_posts(url, count=50):
-    """Fetch latest posts from Telegram channel (newest first)"""
     response = requests.get(url)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, 'html.parser')
@@ -127,7 +137,6 @@ def fetch_latest_posts(url, count=50):
 # ============================================
 
 def download_telegram_video(video_url, output_path):
-    """Download video directly from Telegram CDN"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(video_url, headers=headers, stream=True)
@@ -143,7 +152,6 @@ def download_telegram_video(video_url, output_path):
         return False
 
 def download_video(video_url, filename):
-    """Download video to Videos folder"""
     video_path = os.path.join(VIDEOS_DIR, filename)
     if download_telegram_video(video_url, video_path):
         return video_path
@@ -182,7 +190,6 @@ def get_existing_rss_items():
     return items
 
 def update_rss(title, video_url, video_filename):
-    """Update RSS with video from Videos folder"""
     title_with_hash = f"{title} #محمد_بن_شمس_الدين"
     items = get_existing_rss_items()
     
@@ -231,25 +238,20 @@ def update_rss(title, video_url, video_filename):
 # ============================================
 
 def get_new_videos_from_telegram():
-    """Get new videos from Telegram channel"""
     last_number = get_last_post_number()
-    
     print(f"📌 Last number: {last_number}")
     
-    # Fetch posts (newest first)
     all_posts = fetch_latest_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK)
     
     if not all_posts:
         print("😴 No posts found")
         return []
     
-    # If no last number (first run), take only the newest post
     if last_number == 0:
         newest = [all_posts[0]]
         print(f"🆕 First run, taking latest post: #{newest[0]['number']}")
         return newest
     
-    # Find posts with number > last_number
     new_posts = [p for p in all_posts if p['number'] > last_number]
     
     if not new_posts:
@@ -257,14 +259,11 @@ def get_new_videos_from_telegram():
         return []
     
     print(f"🆕 Found {len(new_posts)} new post(s): {[p['number'] for p in new_posts]}")
-    
-    # Sort by number ascending (oldest first)
     new_posts.sort(key=lambda x: x['number'])
     
     return new_posts
 
 async def process_video(post):
-    """Process single video from Telegram post"""
     video_url = post['video_url']
     post_number = post['number']
     title = post['title']
@@ -280,13 +279,8 @@ async def process_video(post):
         return False
     
     print(f"✅ Downloaded: {filename}")
-    
     update_rss(title, post_link, filename)
     save_last_post_number(post_number)
-    
-    git_commit(VIDEOS_DIR, f"Add video #{post_number}")
-    git_commit(RSS_FILE, "Update RSS feed")
-    git_commit(PROCESSED_LOG, f"Update last number to {post_number}")
     
     print(f"✅ Done: #{post_number}")
     return True
@@ -307,8 +301,15 @@ async def main():
         print("🏁 No new videos, exiting")
         return
     
+    # Process all videos first
     for post in new_videos:
         await process_video(post)
+    
+    # Then commit everything at once
+    if new_videos:
+        numbers = [p['number'] for p in new_videos]
+        commit_msg = f"Add videos #{min(numbers)}-{max(numbers)}"
+        git_commit_all(commit_msg)
     
     print("\n🏁 Finished")
 
