@@ -34,6 +34,7 @@ MAX_VIDEOS_CHECK = 20
 # ============================================
 
 def get_last_post_number():
+    """Get last processed post number from file"""
     if not os.path.exists(PROCESSED_LOG):
         return 0
     try:
@@ -44,10 +45,12 @@ def get_last_post_number():
         return 0
 
 def save_last_post_number(number):
+    """Save last processed post number to file"""
     with open(PROCESSED_LOG, "w", encoding="utf-8") as f:
         f.write(str(number))
 
 def extract_post_number(link):
+    """Extract post number from Telegram link (e.g., /26 -> 26)"""
     try:
         return int(link.split('/')[-1])
     except:
@@ -57,13 +60,14 @@ def get_algeria_time():
     tz = pytz.timezone('Africa/Algiers')
     return datetime.now(tz).strftime('%a, %d %b %Y %H:%M:%S +0100')
 
-def git_commit_all(commit_msg):
-    """Commit all changes at once and push"""
+def git_push_all(commit_msg):
+    """Commit all changes and push to GitHub"""
     try:
+        # Configure git
         subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], check=True, capture_output=True)
         subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], check=True, capture_output=True)
         
-        # Add all changed files
+        # Add all changes
         subprocess.run(['git', 'add', VIDEOS_DIR, RSS_FILE, PROCESSED_LOG], check=True, capture_output=True)
         
         # Check if there are changes to commit
@@ -81,10 +85,10 @@ def git_commit_all(commit_msg):
         # Push
         subprocess.run(['git', 'push', 'origin', GITHUB_BRANCH], check=True, capture_output=True)
         
-        print(f"✅ Committed and pushed: {commit_msg}")
+        print(f"✅ Pushed: {commit_msg}")
         return True
     except Exception as e:
-        print(f"❌ Git failed: {e}")
+        print(f"❌ Git push failed: {e}")
         return False
 
 # ============================================
@@ -92,6 +96,7 @@ def git_commit_all(commit_msg):
 # ============================================
 
 def fetch_latest_posts(url, count=50):
+    """Fetch latest posts from Telegram channel (newest first)"""
     response = requests.get(url)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, 'html.parser')
@@ -137,6 +142,7 @@ def fetch_latest_posts(url, count=50):
 # ============================================
 
 def download_telegram_video(video_url, output_path):
+    """Download video directly from Telegram CDN"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(video_url, headers=headers, stream=True)
@@ -152,6 +158,7 @@ def download_telegram_video(video_url, output_path):
         return False
 
 def download_video(video_url, filename):
+    """Download video to Videos folder"""
     video_path = os.path.join(VIDEOS_DIR, filename)
     if download_telegram_video(video_url, video_path):
         return video_path
@@ -190,6 +197,7 @@ def get_existing_rss_items():
     return items
 
 def update_rss(title, video_url, video_filename):
+    """Update RSS with video from Videos folder"""
     title_with_hash = f"{title} #محمد_بن_شمس_الدين"
     items = get_existing_rss_items()
     
@@ -238,8 +246,9 @@ def update_rss(title, video_url, video_filename):
 # ============================================
 
 def get_new_videos_from_telegram():
+    """Get new videos from Telegram channel"""
     last_number = get_last_post_number()
-    print(f"📌 Last number: {last_number}")
+    print(f"📌 Last number from file: {last_number}")
     
     all_posts = fetch_latest_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK)
     
@@ -252,6 +261,7 @@ def get_new_videos_from_telegram():
         print(f"🆕 First run, taking latest post: #{newest[0]['number']}")
         return newest
     
+    # Get posts with number > last_number
     new_posts = [p for p in all_posts if p['number'] > last_number]
     
     if not new_posts:
@@ -264,6 +274,7 @@ def get_new_videos_from_telegram():
     return new_posts
 
 async def process_video(post):
+    """Process single video from Telegram post"""
     video_url = post['video_url']
     post_number = post['number']
     title = post['title']
@@ -302,16 +313,21 @@ async def main():
         return
     
     # Process all videos first
+    processed_numbers = []
     for post in new_videos:
-        await process_video(post)
+        success = await process_video(post)
+        if success:
+            processed_numbers.append(post['number'])
     
-    # Then commit everything at once
-    if new_videos:
-        numbers = [p['number'] for p in new_videos]
-        commit_msg = f"Add videos #{min(numbers)}-{max(numbers)}"
-        git_commit_all(commit_msg)
-    
-    print("\n🏁 Finished")
+    # Push all changes at once
+    if processed_numbers:
+        if len(processed_numbers) == 1:
+            msg = f"Add video #{processed_numbers[0]}"
+        else:
+            msg = f"Add videos #{min(processed_numbers)}-{max(processed_numbers)}"
+        git_push_all(msg)
+    else:
+        print("😴 No videos were processed successfully")
 
 if __name__ == "__main__":
     asyncio.run(main())
