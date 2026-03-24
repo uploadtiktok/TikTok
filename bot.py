@@ -8,65 +8,86 @@ from datetime import datetime
 import pytz
 from bs4 import BeautifulSoup
 
-# --- الإعدادات ---
+# ============================================
+# CONFIGURATION
+# ============================================
 TOKEN = os.environ.get('GITHUB_TOKEN', '')
 REPO = os.environ.get('GITHUB_REPO', 'uploadtiktok/TikTok')
 BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
+
 TELEGRAM_URL = "https://t.me/s/zapiershorts"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, "Videos")
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 
 MAX_ITEMS = 15
 
-# --- دوال GitHub API ---
+# ============================================
+# GITHUB API FUNCTIONS
+# ============================================
 def gh_api(endpoint, method='GET', data=None):
     url = f"https://api.github.com/repos/{REPO}/{endpoint}"
-    headers = {'Authorization': f'token {TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
-    if method == 'GET': r = requests.get(url, headers=headers)
-    else: r = requests.put(url, headers=headers, json=data)
+    headers = {
+        'Authorization': f'token {TOKEN}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    if method == 'GET':
+        r = requests.get(url, headers=headers)
+    else:
+        r = requests.put(url, headers=headers, json=data)
     r.raise_for_status()
     return r.json()
 
 def get_gh_file(path):
     try:
         res = gh_api(f"contents/{path}")
-        return base64.b64decode(res['content']).decode('utf-8'), res['sha']
-    except: return None, None
+        content = base64.b64decode(res['content']).decode('utf-8')
+        return content, res['sha']
+    except:
+        return None, None
 
 def save_gh_file(path, content, msg, sha=None):
     encoded = base64.b64encode(content.encode('utf-8')).decode('utf-8')
     data = {'message': msg, 'content': encoded, 'branch': BRANCH}
-    if sha: data['sha'] = sha
+    if sha:
+        data['sha'] = sha
     return gh_api(f"contents/{path}", 'PUT', data)
 
-# --- منطق الـ RSS المتكامل ---
+# ============================================
+# RSS LOGIC (FIXED & FULL STRUCTURE)
+# ============================================
 def update_rss_full(title, telegram_link, video_filename):
-    # 1. جلب العناصر القديمة مع فرز الروابط بدقة
+    """تحديث ملف RSS مع توزيع الروابط بدقة: جيت هاب للرابط وتيليجرام للمرفقات"""
     old_content, _ = get_gh_file("rss.xml")
     items = []
+    
     if old_content:
         try:
             root = ET.fromstring(old_content)
             for item in root.findall('.//item'):
-                # فرز الروابط: أي رابط يحتوي على github نعتبره الرابط الأساسي
-                # وأي رابط يحتوي على t.me نعتبره المرجع
-                candidate_a = item.find('link').text if item.find('link') is not None else ""
-                candidate_b = item.find('enclosure').get('url') if item.find('enclosure') is not None else ""
+                c_link = item.find('link').text if item.find('link') is not None else ""
+                enc_node = item.find('enclosure')
+                c_enc = enc_node.get('url') if enc_node is not None else ""
                 
-                g_link = candidate_a if "githubusercontent" in candidate_a else candidate_b
-                t_link = candidate_b if "t.me" in candidate_b else candidate_a
+                # فرز الروابط لاسترجاع البيانات القديمة بشكل صحيح
+                g_link = c_link if "githubusercontent" in c_link else c_enc
+                t_link = c_enc if "t.me" in c_enc else c_link
                 
-                items.append({
-                    'title': item.find('title').text,
-                    'github_url': g_link,
-                    'telegram_url': t_link,
-                    'pub_date': item.find('pubDate').text if item.find('pubDate') is not None else ""
-                })
-        except: pass
+                if g_link:  # نضمن وجود رابط جيت هاب على الأقل
+                    items.append({
+                        'title': item.find('title').text,
+                        'github_url': g_link,
+                        'telegram_url': t_link,
+                        'pub_date': item.find('pubDate').text if item.find('pubDate') is not None else ""
+                    })
+        except:
+            pass
 
-    # 2. إضافة العنصر الجديد
-    new_github_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{video_filename}"
+    # إنشاء رابط GitHub Raw المباشر للفيديو الجديد
+    new_github_raw_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{video_filename}"
+    
+    # إضافة العنصر الجديد مع التأكد من استخدام المتغير الصحيح
     items.append({
         'title': title,
         'github_url': new_github_raw_url,
@@ -74,9 +95,10 @@ def update_rss_full(title, telegram_link, video_filename):
         'pub_date': datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
     })
     
-    if len(items) > MAX_ITEMS: items.pop(0)
+    if len(items) > MAX_ITEMS:
+        items.pop(0)
 
-    # 3. بناء XML (التوزيع الصارم للقيم)
+    # بناء الهيكل النهائي للـ XML
     rss = ET.Element('rss', version='2.0')
     channel = ET.SubElement(rss, 'channel')
     ET.SubElement(channel, 'title').text = 'مقاطع بجاد الأثري - Shorts'
@@ -86,38 +108,42 @@ def update_rss_full(title, telegram_link, video_filename):
     for i in items:
         node = ET.SubElement(channel, 'item')
         ET.SubElement(node, 'title').text = i['title']
-        
-        # الرابط المباشر -> دائماً GitHub Raw
-        ET.SubElement(node, 'link').text = i['github_url']
-        
+        ET.SubElement(node, 'link').text = i['github_url']  # الرابط المباشر
         ET.SubElement(node, 'pubDate').text = i['pub_date']
-        
-        # الملحقات والمعرف الفريد -> دائماً تيليجرام
-        ET.SubElement(node, 'enclosure', url=i['telegram_url'], type='video/mp4')
-        ET.SubElement(node, 'guid', isPermaLink='false').text = i['telegram_url']
+        ET.SubElement(node, 'enclosure', url=i['telegram_url'], type='video/mp4') # تيليجرام
+        ET.SubElement(node, 'guid', isPermaLink='false').text = i['telegram_url'] # تيليجرام
 
-    # تحويل وتنسيق
+    # تنسيق الـ XML
     xml_out = minidom.parseString(ET.tostring(rss, encoding='utf-8')).toprettyxml(indent="  ")
     final_xml = "\n".join([line for line in xml_out.split('\n') if line.strip()])
     
     _, sha = get_gh_file("rss.xml")
     save_gh_file("rss.xml", final_xml, f"Add {video_filename}", sha)
 
-# --- المعالج الرئيسي ---
+# ============================================
+# MAIN EXECUTION
+# ============================================
 async def main():
-    if not TOKEN: return
+    if not TOKEN:
+        print("❌ Error: GITHUB_TOKEN is missing"); return
     
     # جلب آخر رقم معالج
     last_val, _ = get_gh_file("lastURL.txt")
     last_id = int(last_val.strip()) if last_val else 0
 
-    # سحب تيليجرام
-    soup = BeautifulSoup(requests.get(TELEGRAM_URL).text, 'html.parser')
+    # سحب بيانات تيليجرام
+    try:
+        r = requests.get(TELEGRAM_URL, headers={'User-Agent': 'Mozilla/5.0'})
+        soup = BeautifulSoup(r.text, 'html.parser')
+    except Exception as e:
+        print(f"❌ Scraper error: {e}"); return
+
     new_posts = []
     for msg in soup.find_all('div', class_='tgme_widget_message_wrap'):
-        a = msg.find('a', class_='tgme_widget_message_date')
-        if not a: continue
-        post_link = a.get('href')
+        a_tag = msg.find('a', class_='tgme_widget_message_date')
+        if not a_tag: continue
+        
+        post_link = a_tag.get('href')
         num = int(post_link.split('/')[-1])
         vid = msg.find('video')
         
@@ -130,30 +156,45 @@ async def main():
                 'title': txt.get_text()[:100] if txt else f"Video {num}"
             })
 
-    # معالجة (من الأقدم للأحدث)
+    # معالجة الفيديوهات
     for p in sorted(new_posts, key=lambda x: x['id']):
         fname = f"{p['id']}.mp4"
         fpath = os.path.join(VIDEOS_DIR, fname)
         
-        # تحميل ورفع الفيديو
-        with open(fpath, 'wb') as f: f.write(requests.get(p['v_src']).content)
-        with open(fpath, 'rb') as f: v_encoded = base64.b64encode(f.read()).decode('utf-8')
+        print(f"🎬 Processing Video #{p['id']}...")
+        
+        # تحميل محلي مؤقت
+        with open(fpath, 'wb') as f:
+            f.write(requests.get(p['v_src']).content)
+        
+        # رفع الفيديو لـ GitHub
+        with open(fpath, 'rb') as f:
+            v_encoded = base64.b64encode(f.read()).decode('utf-8')
         
         v_sha = None
-        try: v_sha = gh_api(f"contents/Videos/{fname}")['sha']
-        except: pass
+        try:
+            v_sha = gh_api(f"contents/Videos/{fname}")['sha']
+        except:
+            pass
         
-        gh_api(f"contents/Videos/{fname}", 'PUT', {'message': f'Vid {p["id"]}', 'content': v_encoded, 'sha': v_sha, 'branch': BRANCH})
+        gh_api(f"contents/Videos/{fname}", 'PUT', {
+            'message': f'Upload Vid {p["id"]}', 
+            'content': v_encoded, 
+            'sha': v_sha, 
+            'branch': BRANCH
+        })
 
-        # تحديث RSS بالهيكل الكامل والروابط الصحيحة
+        # تحديث RSS
         update_rss_full(p['title'], p['t_link'], fname)
         
-        # تحديث ملف التعقب
+        # تحديث رقم التعقب
         _, l_sha = get_gh_file("lastURL.txt")
-        save_gh_file("lastURL.txt", str(p['id']), f"Last {p['id']}", l_sha)
+        save_gh_file("lastURL.txt", str(p['id']), f"Update last to {p['id']}", l_sha)
         
-        if os.path.exists(fpath): os.remove(fpath)
-        print(f"✅ Processed {p['id']} with full RSS metadata")
+        if os.path.exists(fpath):
+            os.remove(fpath)
+            
+        print(f"✅ Successfully finished video {p['id']}")
 
 if __name__ == "__main__":
     asyncio.run(main())
