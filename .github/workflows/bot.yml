@@ -16,9 +16,8 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0          # سحب كل التاريخ لضمان أحدث commit
-        ref: main               # تأكد من استخدام الفرع الصحيح
+        token: ${{ secrets.PAT_TOKEN }}
+        fetch-depth: 0
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -35,18 +34,8 @@ jobs:
     
     - name: Run bot
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         GITHUB_REPO: ${{ github.repository }}
         GITHUB_BRANCH: ${{ github.ref_name }}
       run: |
         python bot.py
-    
-    - name: Push changes
-      if: success()
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add -A
-        git diff --quiet && git diff --staged --quiet || git commit -m "Auto update from bot [skip ci]"
-        git pull --rebase origin ${{ github.ref_name }} || true
-        git push origin ${{ github.ref_name }}
