@@ -6,7 +6,6 @@ from xml.dom import minidom
 from xml.etree import ElementTree as ET
 from datetime import datetime
 import pytz
-import subprocess
 from bs4 import BeautifulSoup
 
 # ============================================
@@ -30,23 +29,100 @@ MAX_RSS_ITEMS = 3
 MAX_VIDEOS_CHECK = 20
 
 # ============================================
+# GITHUB API FUNCTIONS (بدون git commands)
+# ============================================
+
+def github_api_request(endpoint, method='GET', data=None):
+    """Send request to GitHub API"""
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/{endpoint}"
+    headers = {
+        'Authorization': f'token {GITHUB_TOKEN}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    
+    if method == 'GET':
+        response = requests.get(url, headers=headers)
+    elif method == 'PUT':
+        response = requests.put(url, headers=headers, json=data)
+    elif method == 'POST':
+        response = requests.post(url, headers=headers, json=data)
+    
+    response.raise_for_status()
+    return response.json()
+
+def get_file_content(path):
+    """Get file content from GitHub"""
+    try:
+        response = github_api_request(f"contents/{path}")
+        content = base64.b64decode(response['content']).decode('utf-8')
+        return content, response['sha']
+    except:
+        return None, None
+
+def update_file(path, content, commit_msg, sha=None):
+    """Update or create file on GitHub"""
+    encoded_content = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+    
+    data = {
+        'message': commit_msg,
+        'content': encoded_content,
+        'branch': GITHUB_BRANCH
+    }
+    
+    if sha:
+        data['sha'] = sha
+    
+    try:
+        github_api_request(f"contents/{path}", 'PUT', data)
+        return True
+    except Exception as e:
+        print(f"❌ Failed to update {path}: {e}")
+        return False
+
+def upload_video(video_path, filename):
+    """Upload video file to GitHub"""
+    try:
+        with open(video_path, 'rb') as f:
+            content = base64.b64encode(f.read()).decode('utf-8')
+        
+        data = {
+            'message': f'Add video {filename}',
+            'content': content,
+            'branch': GITHUB_BRANCH
+        }
+        
+        # Check if file already exists
+        try:
+            existing = github_api_request(f"contents/Videos/{filename}")
+            data['sha'] = existing['sha']
+        except:
+            pass
+        
+        github_api_request(f"contents/Videos/{filename}", 'PUT', data)
+        return True
+    except Exception as e:
+        print(f"❌ Failed to upload video: {e}")
+        return False
+
+# ============================================
 # UTILITY FUNCTIONS
 # ============================================
 
 def get_last_post_number():
-    if not os.path.exists(PROCESSED_LOG):
-        return 0
-    try:
-        with open(PROCESSED_LOG, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            return int(content) if content else 0
-    except:
-        return 0
+    """Get last post number from GitHub"""
+    content, _ = get_file_content("lastURL.txt")
+    if content:
+        try:
+            return int(content.strip())
+        except:
+            return 0
+    return 0
 
 def save_last_post_number(number):
-    with open(PROCESSED_LOG, "w", encoding="utf-8") as f:
-        f.write(str(number))
-        print(f"💾 Saved: {number}")
+    """Save last post number to GitHub"""
+    content = str(number)
+    _, sha = get_file_content("lastURL.txt")
+    return update_file("lastURL.txt", content, f"Update last post to {number}", sha)
 
 def extract_post_number(link):
     try:
@@ -57,53 +133,6 @@ def extract_post_number(link):
 def get_algeria_time():
     tz = pytz.timezone('Africa/Algiers')
     return datetime.now(tz).strftime('%a, %d %b %Y %H:%M:%S +0100')
-
-def git_push_all(commit_msg):
-    """Commit all changes and push to GitHub (one shot)"""
-    try:
-        # Configure git
-        subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], 
-                      check=True, capture_output=True)
-        subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], 
-                      check=True, capture_output=True)
-        
-        # Update remote URL with token
-        if GITHUB_TOKEN:
-            remote_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
-            subprocess.run(['git', 'remote', 'set-url', 'origin', remote_url], 
-                          check=True, capture_output=True)
-            print("🔑 Remote URL updated with token")
-        
-        # Add all changes
-        subprocess.run(['git', 'add', '-A'], check=True, capture_output=True)
-        
-        # Check if there are changes to commit
-        result = subprocess.run(['git', 'diff', '--cached', '--quiet'], capture_output=True)
-        if result.returncode == 0:
-            print("📝 No changes to commit")
-            return True
-        
-        # Commit
-        subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
-        
-        # Pull with rebase to avoid conflicts
-        subprocess.run(['git', 'pull', '--rebase', 'origin', GITHUB_BRANCH], 
-                      check=True, capture_output=True)
-        
-        # Push
-        subprocess.run(['git', 'push', 'origin', GITHUB_BRANCH], 
-                      check=True, capture_output=True)
-        
-        print(f"✅ Pushed: {commit_msg}")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Git operation failed: {e}")
-        if e.stderr:
-            print(f"Error: {e.stderr.decode()}")
-        return False
-    except Exception as e:
-        print(f"❌ Git push failed: {e}")
-        return False
 
 # ============================================
 # TELEGRAM FUNCTIONS
@@ -180,13 +209,15 @@ def download_video(video_url, filename):
 # ============================================
 
 def get_existing_rss_items():
+    """Get existing RSS items from GitHub"""
+    content, _ = get_file_content("rss.xml")
     items = []
-    if not os.path.exists(RSS_FILE):
+    
+    if not content:
         return items
     
     try:
-        tree = ET.parse(RSS_FILE)
-        root = tree.getroot()
+        root = ET.fromstring(content)
         channel = root.find('channel')
         
         for item in channel.findall('item'):
@@ -202,12 +233,13 @@ def get_existing_rss_items():
                 'enclosure_url': enc_url,
                 'pub_date': pub_date
             })
-    except:
-        pass
+    except Exception as e:
+        print(f"⚠️ Error parsing RSS: {e}")
     
     return items
 
 def update_rss(title, video_url, video_filename):
+    """Update RSS and save to GitHub"""
     title_with_hash = f"{title} #محمد_بن_شمس_الدين"
     items = get_existing_rss_items()
     
@@ -226,6 +258,7 @@ def update_rss(title, video_url, video_filename):
         items.pop(0)
         print(f"🗑️ Removed oldest")
     
+    # Create RSS XML
     rss = ET.Element('rss', version='2.0')
     channel = ET.SubElement(rss, 'channel')
     
@@ -245,11 +278,11 @@ def update_rss(title, video_url, video_filename):
     
     xml_str = minidom.parseString(ET.tostring(rss)).toprettyxml(indent="  ")
     xml_lines = [line for line in xml_str.split('\n') if line.strip()]
+    rss_content = '\n'.join(xml_lines)
     
-    with open(RSS_FILE, "w", encoding="utf-8") as f:
-        f.write('\n'.join(xml_lines))
-    
-    print(f"✅ RSS: {len(items)} items")
+    # Save to GitHub
+    _, sha = get_file_content("rss.xml")
+    return update_file("rss.xml", rss_content, f"Update RSS with {video_filename}", sha)
 
 # ============================================
 # MAIN PROCESSING
@@ -257,7 +290,7 @@ def update_rss(title, video_url, video_filename):
 
 def get_new_videos_from_telegram():
     last_number = get_last_post_number()
-    print(f"📌 Last number from file: {last_number}")
+    print(f"📌 Last number from GitHub: {last_number}")
     
     all_posts = fetch_latest_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK)
     
@@ -297,8 +330,21 @@ def process_video(post):
         return False
     
     print(f"✅ Downloaded: {filename}")
-    update_rss(title, post_link, filename)
-    save_last_post_number(post_number)
+    
+    # Upload video to GitHub
+    if not upload_video(video_path, filename):
+        return False
+    
+    # Update RSS
+    if not update_rss(title, post_link, filename):
+        return False
+    
+    # Update last post number
+    if not save_last_post_number(post_number):
+        return False
+    
+    # Clean up local file
+    os.remove(video_path)
     
     print(f"✅ Done: #{post_number}")
     return True
@@ -306,7 +352,6 @@ def process_video(post):
 async def main():
     print("🚀 Bot started")
     print(f"📦 Repo: {GITHUB_REPO}")
-    print(f"📁 Videos dir: {VIDEOS_DIR}")
     print(f"📡 Telegram: {TELEGRAM_URL}")
     
     if not GITHUB_TOKEN:
@@ -319,26 +364,15 @@ async def main():
         print("🏁 No new videos, exiting")
         return
     
-    # Process all videos first
+    # Process all videos
     processed_numbers = []
     for post in new_videos:
         success = process_video(post)
         if success:
             processed_numbers.append(post['number'])
     
-    # Push all changes once at the end
     if processed_numbers:
-        if len(processed_numbers) == 1:
-            msg = f"Add video #{processed_numbers[0]}"
-        else:
-            msg = f"Add videos #{min(processed_numbers)}-{max(processed_numbers)}"
-        
-        print(f"\n📤 Pushing all changes...")
-        success = git_push_all(msg)
-        if success:
-            print(f"✅ Successfully pushed {len(processed_numbers)} videos")
-        else:
-            print(f"❌ Failed to push changes")
+        print(f"\n✅ Successfully processed {len(processed_numbers)} videos: {processed_numbers}")
     else:
         print("😴 No videos processed successfully")
 
