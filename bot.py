@@ -29,7 +29,7 @@ MAX_RSS_ITEMS = 3
 MAX_VIDEOS_CHECK = 20
 
 # ============================================
-# GITHUB API FUNCTIONS (بدون git commands)
+# GITHUB API FUNCTIONS
 # ============================================
 
 def github_api_request(endpoint, method='GET', data=None):
@@ -240,15 +240,16 @@ def get_existing_rss_items():
 
 def update_rss(title, video_url, video_filename):
     """Update RSS and save to GitHub"""
-    # استخدام العنوان الأصلي بدون أي تعديل
     items = get_existing_rss_items()
     
+    # GitHub raw URL for the video
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
     
+    # IMPORTANT: link = raw_url (GitHub), enclosure_url = video_url (Telegram)
     new_item = {
         'title': title,
-        'link': raw_url,          # رابط GitHub raw للمقطع
-        'enclosure_url': video_url, # رابط Telegram الأصلي
+        'link': raw_url,           # ← رابط GitHub raw
+        'enclosure_url': video_url, # ← رابط Telegram الأصلي
         'pub_date': get_algeria_time()
     }
     
@@ -271,10 +272,10 @@ def update_rss(title, video_url, video_filename):
     for item in items:
         elem = ET.SubElement(channel, 'item')
         ET.SubElement(elem, 'title').text = item['title']
-        ET.SubElement(elem, 'link').text = item['link']
+        ET.SubElement(elem, 'link').text = item['link']           # GitHub raw URL
         ET.SubElement(elem, 'pubDate').text = item['pub_date']
-        ET.SubElement(elem, 'enclosure', url=item['enclosure_url'], type='video/mp4')
-        ET.SubElement(elem, 'guid', isPermaLink='false').text = item['link']
+        ET.SubElement(elem, 'enclosure', url=item['enclosure_url'], type='video/mp4')  # Telegram URL
+        ET.SubElement(elem, 'guid', isPermaLink='false').text = item['link']  # GitHub raw URL
     
     xml_str = minidom.parseString(ET.tostring(rss)).toprettyxml(indent="  ")
     xml_lines = [line for line in xml_str.split('\n') if line.strip()]
