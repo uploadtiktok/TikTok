@@ -2,13 +2,13 @@ import asyncio
 import requests
 import os
 import base64
-import feedparser
-import yt_dlp
+import re
 from xml.dom import minidom
 from xml.etree import ElementTree as ET
 from datetime import datetime
 import pytz
 import subprocess
+from bs4 import BeautifulSoup
 
 # ============================================
 # CONFIGURATION
@@ -19,22 +19,20 @@ GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'uploadtiktok/TikTok')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
-# YouTube Settings
-YOUTUBE_RSS_URL = os.environ.get('YOUTUBE_RSS_URL', 'https://www.youtube.com/feeds/videos.xml?channel_id=UCLSEQ0cuNz_vJ_H3uXB1R7w')
+# Telegram Settings
+TELEGRAM_URL = "https://t.me/s/zapiershorts"
 
 # File Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, "Videos")
 RSS_FILE = os.path.join(BASE_DIR, "rss.xml")
 PROCESSED_LOG = os.path.join(BASE_DIR, "processed_urls.txt")
-COOKIES_FILE = os.path.join(BASE_DIR, "cookies.txt")
 
 # Create Videos directory if not exists
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 
 # Settings
 MAX_RSS_ITEMS = 3
-MIN_DURATION = 20
 MAX_VIDEOS_CHECK = 20
 
 # ============================================
@@ -73,63 +71,104 @@ def git_commit(file_path, commit_msg):
         return False
 
 # ============================================
-# YOUTUBE FUNCTIONS
+# TELEGRAM FUNCTIONS
 # ============================================
 
-def get_video_duration(url):
-    """Get video duration with anti-bot measures"""
-    try:
-        opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extractor_args': {'youtube': {'skip': ['dash', 'hls']}},
-            'sleep_interval': 3,
-        }
-        
-        # Add cookies if file exists
-        if os.path.exists(COOKIES_FILE):
-            opts['cookiefile'] = COOKIES_FILE
-        
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            return info.get('duration', 0)
-    except Exception as e:
-        print(f"⚠️ Duration error: {e}")
-        return None
+def extract_video_id(url):
+    """Extract video ID from Telegram video URL"""
+    # Telegram video URLs look like: https://t.me/zapiershorts/123
+    match = re.search(r'/zapiershorts/(\d+)', url)
+    if match:
+        return match.group(1)
+    return None
 
-def download_video_to_repo(url, filename):
-    """Download video directly to Videos folder"""
+def fetch_telegram_posts(url, count=50, since_link=None):
+    """Fetch latest posts from Telegram channel"""
+    response = requests.get(url)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    messages = soup.find_all('div', class_='tgme_widget_message_wrap')
+    
+    posts = []
+    for msg in messages:
+        # Get message link
+        link_tag = msg.find('a', class_='tgme_widget_message_date')
+        if not link_tag:
+            continue
+        link = link_tag.get('href')
+        if not link.startswith('https://'):
+            link = 'https://t.me' + link
+        
+        # Stop if we reached last processed post
+        if since_link and link == since_link:
+            break
+        
+        # Find video elements
+        video_elem = msg.find('video')
+        if not video_elem:
+            continue
+        
+        # Get video source URL
+        video_src = None
+        source = video_elem.find('source')
+        if source and source.get('src'):
+            video_src = source.get('src')
+        
+        if not video_src:
+            continue
+        
+        # Get text content
+        text_div = msg.find('div', class_='tgme_widget_message_text')
+        text = text_div.get_text() if text_div else ''
+        
+        # Extract video ID from link
+        video_id = extract_video_id(link)
+        if not video_id:
+            video_id = str(len(posts) + 1)
+        
+        posts.append({
+            'link': link,
+            'video_url': video_src,
+            'video_id': video_id,
+            'title': text[:100] if text else f'Video {video_id}'
+        })
+        
+        if len(posts) >= count:
+            break
+    
+    return posts
+
+# ============================================
+# VIDEO DOWNLOAD FUNCTIONS
+# ============================================
+
+def download_telegram_video(video_url, output_path):
+    """Download video directly from Telegram CDN"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        response = requests.get(video_url, headers=headers, stream=True)
+        response.raise_for_status()
+        
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        return os.path.exists(output_path)
+    except Exception as e:
+        print(f"⚠️ Download failed: {e}")
+        return False
+
+def download_video(video_url, filename):
+    """Download video to Videos folder"""
     video_path = os.path.join(VIDEOS_DIR, filename)
     
-    opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': video_path,
-        'quiet': True,
-        'no_warnings': True,
-        'extractor_args': {'youtube': {'skip': ['dash', 'hls']}},
-        'throttledratelimit': 1000000,
-        'sleep_interval': 5,
-        'max_sleep_interval': 10,
-        'sleep_interval_requests': 2,
-    }
+    if download_telegram_video(video_url, video_path):
+        return video_path
     
-    # Add cookies if file exists
-    if os.path.exists(COOKIES_FILE):
-        opts['cookiefile'] = COOKIES_FILE
-    
-    try:
-        if os.path.exists(video_path):
-            os.remove(video_path)
-        
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
-        
-        if os.path.exists(video_path):
-            return video_path
-        return None
-    except Exception as e:
-        print(f"⚠️ DL failed: {e}")
-        return None
+    return None
 
 # ============================================
 # RSS FUNCTIONS
@@ -213,53 +252,31 @@ def update_rss(title, video_url, video_filename):
 # MAIN PROCESSING
 # ============================================
 
-def get_new_videos():
-    feed = feedparser.parse(YOUTUBE_RSS_URL)
-    if not feed.entries:
-        print("⚠️ No entries")
+def get_new_videos_from_telegram():
+    """Get new videos from Telegram channel"""
+    last_url = get_last_url()
+    posts = fetch_telegram_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK, since_link=last_url)
+    
+    if not posts:
+        print("😴 No new videos from Telegram")
         return []
     
-    last_url = get_last_url()
-    entries = feed.entries[:MAX_VIDEOS_CHECK]
-    
-    last_idx = -1
-    for i, entry in enumerate(entries):
-        if entry.link == last_url:
-            last_idx = i
-            break
-    
-    if last_idx == -1:
-        if last_url:
-            print("⚠️ Last URL not found")
-        return [entries[0]] if entries else []
-    else:
-        return entries[:last_idx]
+    print(f"🆕 Found: {len(posts)} new videos")
+    return posts
 
-async def process_video(entry):
-    url = entry.link
-    title = entry.title
-    vid = entry.yt_videoid
+async def process_video(post):
+    """Process single video from Telegram post"""
+    video_url = post['video_url']
+    video_id = post['video_id']
+    title = post['title']
+    post_link = post['link']
     
     print(f"\n🔍 {title[:50]}...")
+    print(f"   🎬 Telegram: {post_link}")
     
-    # Check duration
-    duration = get_video_duration(url)
-    if duration is None:
-        return False
-    
-    print(f"   ⏱️ {duration}s")
-    
-    if duration < MIN_DURATION:
-        print(f"   ⏭️ Skip (<{MIN_DURATION}s)")
-        save_last_url(url)
-        git_commit(PROCESSED_LOG, f"Update processed URL")
-        return False
-    
-    print(f"🎯 Processing ({duration}s)")
-    
-    # Download directly to Videos folder
-    filename = f"{vid}.mp4"
-    video_path = download_video_to_repo(url, filename)
+    # Download video
+    filename = f"{video_id}.mp4"
+    video_path = download_video(video_url, filename)
     
     if not video_path:
         print("❌ Download failed")
@@ -268,45 +285,38 @@ async def process_video(entry):
     print(f"✅ Downloaded: {filename}")
     
     # Update RSS
-    update_rss(title, url, filename)
+    update_rss(title, post_link, filename)
     
-    # Save last URL
-    save_last_url(url)
+    # Save last processed URL (Telegram post link)
+    save_last_url(post_link)
     
     # Commit all changes to GitHub
     git_commit(VIDEOS_DIR, f"Add video: {title[:50]}")
     git_commit(RSS_FILE, "Update RSS feed")
     git_commit(PROCESSED_LOG, "Update processed URL")
     
-    print(f"✅ Done: {vid}")
+    print(f"✅ Done: {video_id}")
     return True
 
 async def main():
-    print("🚀 Bot started (GitHub Actions)")
+    print("🚀 Bot started (Telegram Source)")
     print(f"📦 Repo: {GITHUB_REPO}")
     print(f"📁 Videos dir: {VIDEOS_DIR}")
-    
-    # Check cookies file
-    if os.path.exists(COOKIES_FILE):
-        print(f"🍪 Cookies file found")
-    else:
-        print(f"⚠️ No cookies file, may fail on YouTube")
+    print(f"📡 Telegram: {TELEGRAM_URL}")
     
     if not GITHUB_TOKEN:
         print("❌ GITHUB_TOKEN not set")
         return
     
-    new_videos = get_new_videos()
+    new_videos = get_new_videos_from_telegram()
     
     if not new_videos:
         print("😴 No new videos")
         return
     
-    print(f"🆕 Found: {len(new_videos)}")
-    
-    # Process videos from oldest to newest
-    for entry in reversed(new_videos):
-        await process_video(entry)
+    # Process videos in order (oldest first)
+    for post in reversed(new_videos):
+        await process_video(post)
     
     print("\n🏁 Finished")
 
