@@ -238,18 +238,22 @@ def get_existing_rss_items():
     
     return items
 
-def update_rss(title, video_url, video_filename):
+def update_rss(title, telegram_post_url, video_filename):
     """Update RSS and save to GitHub"""
     items = get_existing_rss_items()
     
-    # GitHub raw URL for the video
-    raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
+    # رابط GitHub الخام للملف الذي تم رفعه
+    github_raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
     
-    # link = raw_url (GitHub), enclosure_url = video_url (Telegram), guid = video_url (Telegram)
+    # رابط Telegram الأصلي (سيتم استخدامه في enclosure و guid)
+    telegram_video_url = telegram_post_url
+    
+    # إنشاء عنصر جديد للـ RSS بالشكل المطلوب
     new_item = {
         'title': title,
-        'link': raw_url,           # ← رابط GitHub raw
-        'enclosure_url': video_url, # ← رابط Telegram
+        'link': github_raw_url,          # ← رابط GitHub الخام (الرابط الرئيسي)
+        'enclosure_url': telegram_video_url,  # ← رابط Telegram الأصلي للفيديو
+        'guid_url': telegram_video_url,       # ← رابط Telegram الأصلي (كمعرف فريد)
         'pub_date': get_algeria_time()
     }
     
@@ -257,9 +261,9 @@ def update_rss(title, video_url, video_filename):
     
     if len(items) > MAX_RSS_ITEMS:
         items.pop(0)
-        print(f"🗑️ Removed oldest")
+        print(f"🗑️ Removed oldest item from RSS")
     
-    # Create RSS XML
+    # إنشاء هيكل RSS XML
     rss = ET.Element('rss', version='2.0')
     channel = ET.SubElement(rss, 'channel')
     
@@ -269,19 +273,24 @@ def update_rss(title, video_url, video_filename):
     ET.SubElement(channel, 'language').text = 'ar-sa'
     ET.SubElement(channel, 'lastBuildDate').text = get_algeria_time()
     
+    # إضافة عناصر item
     for item in items:
         elem = ET.SubElement(channel, 'item')
         ET.SubElement(elem, 'title').text = item['title']
-        ET.SubElement(elem, 'link').text = item['link']           # GitHub raw URL
+        # الرابط الأساسي: GitHub raw URL
+        ET.SubElement(elem, 'link').text = item['link']
         ET.SubElement(elem, 'pubDate').text = item['pub_date']
-        ET.SubElement(elem, 'enclosure', url=item['enclosure_url'], type='video/mp4')  # Telegram URL
-        ET.SubElement(elem, 'guid', isPermaLink='false').text = item['enclosure_url']  # Telegram URL
+        # عنصر enclosure: يحوي رابط Telegram الأصلي
+        ET.SubElement(elem, 'enclosure', url=item['enclosure_url'], type='video/mp4')
+        # عنصر guid: معرّف فريد (يُفضل أن يكون رابط Telegram لتجنب التكرار)
+        ET.SubElement(elem, 'guid', isPermaLink='false').text = item['guid_url']
     
+    # تنسيق XML بشكل جميل
     xml_str = minidom.parseString(ET.tostring(rss)).toprettyxml(indent="  ")
     xml_lines = [line for line in xml_str.split('\n') if line.strip()]
     rss_content = '\n'.join(xml_lines)
     
-    # Save to GitHub
+    # حفظ RSS في GitHub
     _, sha = get_file_content("rss.xml")
     return update_file("rss.xml", rss_content, f"Update RSS with {video_filename}", sha)
 
@@ -319,7 +328,7 @@ def process_video(post):
     video_url = post['video_url']
     post_number = post['number']
     title = post['title']
-    post_link = post['link']
+    post_link = post['link']  # رابط منشور Telegram الأصلي
     
     print(f"\n🎬 Post #{post_number}: {title[:50]}...")
     
@@ -332,19 +341,19 @@ def process_video(post):
     
     print(f"✅ Downloaded: {filename}")
     
-    # Upload video to GitHub
+    # رفع الفيديو إلى GitHub
     if not upload_video(video_path, filename):
         return False
     
-    # Update RSS
+    # تحديث RSS مع تمرير رابط Telegram الأصلي
     if not update_rss(title, post_link, filename):
         return False
     
-    # Update last post number
+    # تحديث آخر رقم تمت معالجته
     if not save_last_post_number(post_number):
         return False
     
-    # Clean up local file
+    # حذف الملف المحلي
     os.remove(video_path)
     
     print(f"✅ Done: #{post_number}")
@@ -365,7 +374,7 @@ async def main():
         print("🏁 No new videos, exiting")
         return
     
-    # Process all videos
+    # معالجة جميع الفيديوهات الجديدة
     processed_numbers = []
     for post in new_videos:
         success = process_video(post)
