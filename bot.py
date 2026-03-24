@@ -2,7 +2,6 @@ import asyncio
 import requests
 import os
 import base64
-import re
 from xml.dom import minidom
 from xml.etree import ElementTree as ET
 from datetime import datetime
@@ -14,24 +13,19 @@ from bs4 import BeautifulSoup
 # CONFIGURATION
 # ============================================
 
-# GitHub Settings
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'uploadtiktok/TikTok')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
-# Telegram Settings
 TELEGRAM_URL = "https://t.me/s/zapiershorts"
 
-# File Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, "Videos")
 RSS_FILE = os.path.join(BASE_DIR, "rss.xml")
 PROCESSED_LOG = os.path.join(BASE_DIR, "lastURL.txt")
 
-# Create Videos directory if not exists
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 
-# Settings
 MAX_RSS_ITEMS = 3
 MAX_VIDEOS_CHECK = 20
 
@@ -39,25 +33,33 @@ MAX_VIDEOS_CHECK = 20
 # UTILITY FUNCTIONS
 # ============================================
 
-def get_last_url():
+def get_last_post_number():
+    """Get last processed post number from file"""
     if not os.path.exists(PROCESSED_LOG):
-        return None
+        return 0
     try:
         with open(PROCESSED_LOG, "r", encoding="utf-8") as f:
-            return f.read().strip()
+            return int(f.read().strip())
     except:
-        return None
+        return 0
 
-def save_last_url(url):
+def save_last_post_number(number):
+    """Save last processed post number to file"""
     with open(PROCESSED_LOG, "w", encoding="utf-8") as f:
-        f.write(url)
+        f.write(str(number))
+
+def extract_post_number(link):
+    """Extract post number from Telegram link (e.g., /26 -> 26)"""
+    try:
+        return int(link.split('/')[-1])
+    except:
+        return 0
 
 def get_algeria_time():
     tz = pytz.timezone('Africa/Algiers')
     return datetime.now(tz).strftime('%a, %d %b %Y %H:%M:%S +0100')
 
 def git_commit(file_path, commit_msg):
-    """Commit file to git"""
     try:
         subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], check=True, capture_output=True)
         subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], check=True, capture_output=True)
@@ -74,7 +76,7 @@ def git_commit(file_path, commit_msg):
 # TELEGRAM FUNCTIONS
 # ============================================
 
-def fetch_telegram_posts(url, count=50, since_link=None):
+def fetch_telegram_posts(url, count=50):
     """Fetch latest posts from Telegram channel (newest first)"""
     response = requests.get(url)
     response.raise_for_status()
@@ -84,7 +86,6 @@ def fetch_telegram_posts(url, count=50, since_link=None):
     
     posts = []
     for msg in messages:
-        # Get message link
         link_tag = msg.find('a', class_='tgme_widget_message_date')
         if not link_tag:
             continue
@@ -92,32 +93,25 @@ def fetch_telegram_posts(url, count=50, since_link=None):
         if not link.startswith('https://'):
             link = 'https://t.me' + link
         
-        # Stop if we reached last processed post
-        if since_link and link == since_link:
-            break
+        # Extract post number
+        post_number = extract_post_number(link)
         
-        # Find video element directly
         video_elem = msg.find('video')
         if not video_elem:
             continue
         
-        # Get video src URL
         video_url = video_elem.get('src')
         if not video_url:
             continue
         
-        # Get text content
         text_div = msg.find('div', class_='tgme_widget_message_text')
         text = text_div.get_text() if text_div else ''
         
-        # Extract video ID from link (e.g., /zapiershorts/26)
-        video_id = link.split('/')[-1] if link else str(len(posts) + 1)
-        
         posts.append({
             'link': link,
+            'number': post_number,
             'video_url': video_url,
-            'video_id': video_id,
-            'title': text[:100] if text else f'Video {video_id}'
+            'title': text[:100] if text else f'Video {post_number}'
         })
         
         if len(posts) >= count:
@@ -130,11 +124,8 @@ def fetch_telegram_posts(url, count=50, since_link=None):
 # ============================================
 
 def download_telegram_video(video_url, output_path):
-    """Download video directly from Telegram CDN"""
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(video_url, headers=headers, stream=True)
         response.raise_for_status()
         
@@ -148,12 +139,9 @@ def download_telegram_video(video_url, output_path):
         return False
 
 def download_video(video_url, filename):
-    """Download video to Videos folder"""
     video_path = os.path.join(VIDEOS_DIR, filename)
-    
     if download_telegram_video(video_url, video_path):
         return video_path
-    
     return None
 
 # ============================================
@@ -189,11 +177,9 @@ def get_existing_rss_items():
     return items
 
 def update_rss(title, video_url, video_filename):
-    """Update RSS with video from Videos folder"""
     title_with_hash = f"{title} #محمد_بن_شمس_الدين"
     items = get_existing_rss_items()
     
-    # GitHub raw URL for video
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
     
     new_item = {
@@ -239,32 +225,41 @@ def update_rss(title, video_url, video_filename):
 # ============================================
 
 def get_new_videos_from_telegram():
-    """Get new videos from Telegram channel (oldest first for processing)"""
-    last_url = get_last_url()
-    posts = fetch_telegram_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK, since_link=last_url)
+    """Get new videos from Telegram channel (only posts with number > last_number)"""
+    last_number = get_last_post_number()
     
-    if not posts:
-        print("😴 No new videos from Telegram")
+    # Fetch posts (newest first)
+    all_posts = fetch_telegram_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK)
+    
+    if not all_posts:
         return []
     
-    print(f"🆕 Found: {len(posts)} new videos")
+    # Filter posts with number > last_number
+    new_posts = [p for p in all_posts if p['number'] > last_number]
     
-    # Reverse to process oldest first (since fetch returns newest first)
-    posts.reverse()
-    return posts
+    if not new_posts:
+        if last_number == 0:
+            print("😴 No videos found")
+        else:
+            print(f"😴 No new videos (last: {last_number})")
+        return []
+    
+    print(f"🆕 Found {len(new_posts)} new video(s) (numbers > {last_number})")
+    
+    # Sort by number ascending (oldest first)
+    new_posts.sort(key=lambda x: x['number'])
+    
+    return new_posts
 
 async def process_video(post):
-    """Process single video from Telegram post"""
     video_url = post['video_url']
-    video_id = post['video_id']
+    post_number = post['number']
     title = post['title']
     post_link = post['link']
     
-    print(f"\n🔍 {title[:50]}...")
-    print(f"   🎬 Video ID: {video_id}")
+    print(f"\n🔍 Post #{post_number}: {title[:50]}...")
     
-    # Download video
-    filename = f"{video_id}.mp4"
+    filename = f"{post_number}.mp4"
     video_path = download_video(video_url, filename)
     
     if not video_path:
@@ -273,18 +268,14 @@ async def process_video(post):
     
     print(f"✅ Downloaded: {filename}")
     
-    # Update RSS
     update_rss(title, post_link, filename)
+    save_last_post_number(post_number)
     
-    # Save last processed URL (Telegram post link)
-    save_last_url(post_link)
-    
-    # Commit all changes to GitHub
-    git_commit(VIDEOS_DIR, f"Add video: {title[:50]}")
+    git_commit(VIDEOS_DIR, f"Add video #{post_number}")
     git_commit(RSS_FILE, "Update RSS feed")
-    git_commit(PROCESSED_LOG, "Update last URL")
+    git_commit(PROCESSED_LOG, f"Update last number to {post_number}")
     
-    print(f"✅ Done: {video_id}")
+    print(f"✅ Done: #{post_number}")
     return True
 
 async def main():
@@ -293,7 +284,7 @@ async def main():
     print(f"📁 Videos dir: {VIDEOS_DIR}")
     print(f"📡 Telegram: {TELEGRAM_URL}")
     print(f"📄 RSS: {RSS_FILE}")
-    print(f"📝 Last URL: {PROCESSED_LOG}")
+    print(f"📝 Last number: {get_last_post_number()}")
     
     if not GITHUB_TOKEN:
         print("❌ GITHUB_TOKEN not set")
@@ -305,7 +296,6 @@ async def main():
         print("😴 No new videos")
         return
     
-    # Process videos in order (already oldest first)
     for post in new_videos:
         await process_video(post)
     
