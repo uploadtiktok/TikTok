@@ -246,9 +246,9 @@ def update_rss(title, video_url, video_filename):
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
     
     new_item = {
-        'title': title,  # العنوان الأصلي كما هو
-        'link': raw_url,
-        'enclosure_url': raw_url,
+        'title': title,
+        'link': raw_url,          # رابط GitHub raw للمقطع
+        'enclosure_url': video_url, # رابط Telegram الأصلي
         'pub_date': get_algeria_time()
     }
     
