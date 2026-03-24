@@ -2,7 +2,7 @@ name: TikTok Bot
 
 on:
   schedule:
-    - cron: '0 23 * * *'  # 00:00 Algeria time
+    - cron: '0 23 * * *'
   workflow_dispatch:
 
 jobs:
@@ -17,7 +17,8 @@ jobs:
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
+        fetch-depth: 0          # سحب كل التاريخ لضمان أحدث commit
+        ref: main               # تأكد من استخدام الفرع الصحيح
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -45,14 +46,7 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add Videos/ rss.xml lastURL.txt 2>/dev/null || true
-        
-        # Only commit and push if there are changes
-        if git diff --quiet && git diff --staged --quiet; then
-          echo "📝 No changes to commit"
-        else
-          git commit -m "Auto update from bot [skip ci]"
-          # Pull with rebase to avoid conflicts
-          git pull --rebase origin ${{ github.ref_name }} || true
-          git push origin ${{ github.ref_name }}
-        fi
+        git add -A
+        git diff --quiet && git diff --staged --quiet || git commit -m "Auto update from bot [skip ci]"
+        git pull --rebase origin ${{ github.ref_name }} || true
+        git push origin ${{ github.ref_name }}
