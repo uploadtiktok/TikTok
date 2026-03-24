@@ -245,10 +245,10 @@ def update_rss(title, video_url, video_filename):
     # GitHub raw URL for the video
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
     
-    # IMPORTANT: link = raw_url (GitHub), enclosure_url = video_url (Telegram)
+    # IMPORTANT: link = raw_url (GitHub raw), enclosure_url = video_url (Telegram original)
     new_item = {
         'title': title,
-        'link': raw_url,           # ← رابط GitHub raw
+        'link': raw_url,           # ← رابط GitHub raw للمقطع
         'enclosure_url': video_url, # ← رابط Telegram الأصلي
         'pub_date': get_algeria_time()
     }
