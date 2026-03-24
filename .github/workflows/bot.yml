@@ -10,13 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     
     permissions:
-      contents: write  # ✅ هذا يعطي التوكن صلاحية الكتابة
+      contents: write
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}  # ✅ التوكن التلقائي
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -33,7 +34,7 @@ jobs:
     
     - name: Run bot
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # ✅ يمرر للكود
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GITHUB_REPO: ${{ github.repository }}
         GITHUB_BRANCH: ${{ github.ref_name }}
       run: |
@@ -44,6 +45,6 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add Videos/ rss.xml processed_urls.txt 2>/dev/null || true
+        git add Videos/ rss.xml lastURL.txt 2>/dev/null || true
         git diff --quiet && git diff --staged --quiet || git commit -m "Auto update from bot [skip ci]"
-        git push  # ✅ يستخدم التوكن التلقائي للدفع
+        git push
