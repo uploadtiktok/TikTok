@@ -27,6 +27,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, "Videos")
 RSS_FILE = os.path.join(BASE_DIR, "rss.xml")
 PROCESSED_LOG = os.path.join(BASE_DIR, "processed_urls.txt")
+COOKIES_FILE = os.path.join(BASE_DIR, "cookies.txt")
 
 # Create Videos directory if not exists
 os.makedirs(VIDEOS_DIR, exist_ok=True)
@@ -84,6 +85,11 @@ def get_video_duration(url):
             'extractor_args': {'youtube': {'skip': ['dash', 'hls']}},
             'sleep_interval': 3,
         }
+        
+        # Add cookies if file exists
+        if os.path.exists(COOKIES_FILE):
+            opts['cookiefile'] = COOKIES_FILE
+        
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             return info.get('duration', 0)
@@ -92,7 +98,7 @@ def get_video_duration(url):
         return None
 
 def download_video_to_repo(url, filename):
-    """Download video directly to Videos folder with anti-bot measures"""
+    """Download video directly to Videos folder"""
     video_path = os.path.join(VIDEOS_DIR, filename)
     
     opts = {
@@ -106,6 +112,11 @@ def download_video_to_repo(url, filename):
         'max_sleep_interval': 10,
         'sleep_interval_requests': 2,
     }
+    
+    # Add cookies if file exists
+    if os.path.exists(COOKIES_FILE):
+        opts['cookiefile'] = COOKIES_FILE
+    
     try:
         if os.path.exists(video_path):
             os.remove(video_path)
@@ -274,6 +285,12 @@ async def main():
     print("🚀 Bot started (GitHub Actions)")
     print(f"📦 Repo: {GITHUB_REPO}")
     print(f"📁 Videos dir: {VIDEOS_DIR}")
+    
+    # Check cookies file
+    if os.path.exists(COOKIES_FILE):
+        print(f"🍪 Cookies file found")
+    else:
+        print(f"⚠️ No cookies file, may fail on YouTube")
     
     if not GITHUB_TOKEN:
         print("❌ GITHUB_TOKEN not set")
