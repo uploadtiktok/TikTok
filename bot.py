@@ -60,6 +60,7 @@ def get_algeria_time():
     return datetime.now(tz).strftime('%a, %d %b %Y %H:%M:%S +0100')
 
 def git_commit(file_path, commit_msg):
+    """Commit file to git"""
     try:
         subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], check=True, capture_output=True)
         subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], check=True, capture_output=True)
@@ -124,6 +125,7 @@ def fetch_telegram_posts(url, count=50):
 # ============================================
 
 def download_telegram_video(video_url, output_path):
+    """Download video directly from Telegram CDN"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get(video_url, headers=headers, stream=True)
@@ -139,6 +141,7 @@ def download_telegram_video(video_url, output_path):
         return False
 
 def download_video(video_url, filename):
+    """Download video to Videos folder"""
     video_path = os.path.join(VIDEOS_DIR, filename)
     if download_telegram_video(video_url, video_path):
         return video_path
@@ -177,6 +180,7 @@ def get_existing_rss_items():
     return items
 
 def update_rss(title, video_url, video_filename):
+    """Update RSS with video from Videos folder"""
     title_with_hash = f"{title} #محمد_بن_شمس_الدين"
     items = get_existing_rss_items()
     
@@ -239,12 +243,13 @@ def get_new_videos_from_telegram():
     
     if not new_posts:
         if last_number == 0:
-            print("😴 No videos found")
+            print("😴 No videos found in channel")
         else:
-            print(f"😴 No new videos (last: {last_number})")
+            print(f"😴 No new videos since post #{last_number}")
         return []
     
     print(f"🆕 Found {len(new_posts)} new video(s) (numbers > {last_number})")
+    print(f"   New numbers: {[p['number'] for p in new_posts]}")
     
     # Sort by number ascending (oldest first)
     new_posts.sort(key=lambda x: x['number'])
@@ -252,6 +257,7 @@ def get_new_videos_from_telegram():
     return new_posts
 
 async def process_video(post):
+    """Process single video from Telegram post"""
     video_url = post['video_url']
     post_number = post['number']
     title = post['title']
@@ -263,14 +269,18 @@ async def process_video(post):
     video_path = download_video(video_url, filename)
     
     if not video_path:
-        print("❌ Download failed")
+        print("❌ Download failed, not marking as processed")
         return False
     
     print(f"✅ Downloaded: {filename}")
     
+    # Update RSS
     update_rss(title, post_link, filename)
+    
+    # Save last processed post number
     save_last_post_number(post_number)
     
+    # Commit all changes to GitHub
     git_commit(VIDEOS_DIR, f"Add video #{post_number}")
     git_commit(RSS_FILE, "Update RSS feed")
     git_commit(PROCESSED_LOG, f"Update last number to {post_number}")
@@ -296,6 +306,7 @@ async def main():
         print("😴 No new videos")
         return
     
+    # Process videos in order (oldest first)
     for post in new_videos:
         await process_video(post)
     
