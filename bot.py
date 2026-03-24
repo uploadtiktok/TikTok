@@ -75,7 +75,7 @@ def git_commit(file_path, commit_msg):
 # ============================================
 
 def fetch_telegram_posts(url, count=50, since_link=None):
-    """Fetch latest posts from Telegram channel"""
+    """Fetch latest posts from Telegram channel (newest first)"""
     response = requests.get(url)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, 'html.parser')
@@ -239,7 +239,7 @@ def update_rss(title, video_url, video_filename):
 # ============================================
 
 def get_new_videos_from_telegram():
-    """Get new videos from Telegram channel"""
+    """Get new videos from Telegram channel (oldest first for processing)"""
     last_url = get_last_url()
     posts = fetch_telegram_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK, since_link=last_url)
     
@@ -248,6 +248,9 @@ def get_new_videos_from_telegram():
         return []
     
     print(f"🆕 Found: {len(posts)} new videos")
+    
+    # Reverse to process oldest first (since fetch returns newest first)
+    posts.reverse()
     return posts
 
 async def process_video(post):
@@ -302,8 +305,8 @@ async def main():
         print("😴 No new videos")
         return
     
-    # Process videos from oldest to newest
-    for post in reversed(new_videos):
+    # Process videos in order (already oldest first)
+    for post in new_videos:
         await process_video(post)
     
     print("\n🏁 Finished")
