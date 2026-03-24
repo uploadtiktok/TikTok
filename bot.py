@@ -61,8 +61,18 @@ def get_algeria_time():
 def git_push_all(commit_msg):
     """Commit all changes and push to GitHub (one shot)"""
     try:
-        subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], check=True, capture_output=True)
-        subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], check=True, capture_output=True)
+        # Configure git
+        subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], 
+                      check=True, capture_output=True)
+        subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], 
+                      check=True, capture_output=True)
+        
+        # Update remote URL with token
+        if GITHUB_TOKEN:
+            remote_url = f"https://{GITHUB_TOKEN}@github.com/{GITHUB_REPO}.git"
+            subprocess.run(['git', 'remote', 'set-url', 'origin', remote_url], 
+                          check=True, capture_output=True)
+            print("🔑 Remote URL updated with token")
         
         # Add all changes
         subprocess.run(['git', 'add', '-A'], check=True, capture_output=True)
@@ -77,13 +87,20 @@ def git_push_all(commit_msg):
         subprocess.run(['git', 'commit', '-m', commit_msg], check=True, capture_output=True)
         
         # Pull with rebase to avoid conflicts
-        subprocess.run(['git', 'pull', '--rebase', 'origin', GITHUB_BRANCH], check=True, capture_output=True)
+        subprocess.run(['git', 'pull', '--rebase', 'origin', GITHUB_BRANCH], 
+                      check=True, capture_output=True)
         
         # Push
-        subprocess.run(['git', 'push', 'origin', GITHUB_BRANCH], check=True, capture_output=True)
+        subprocess.run(['git', 'push', 'origin', GITHUB_BRANCH], 
+                      check=True, capture_output=True)
         
         print(f"✅ Pushed: {commit_msg}")
         return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Git operation failed: {e}")
+        if e.stderr:
+            print(f"Error: {e.stderr.decode()}")
+        return False
     except Exception as e:
         print(f"❌ Git push failed: {e}")
         return False
@@ -264,7 +281,7 @@ def get_new_videos_from_telegram():
     
     return new_posts
 
-async def process_video(post):
+def process_video(post):
     video_url = post['video_url']
     post_number = post['number']
     title = post['title']
@@ -302,18 +319,26 @@ async def main():
         print("🏁 No new videos, exiting")
         return
     
+    # Process all videos first
     processed_numbers = []
     for post in new_videos:
-        success = await process_video(post)
+        success = process_video(post)
         if success:
             processed_numbers.append(post['number'])
     
+    # Push all changes once at the end
     if processed_numbers:
         if len(processed_numbers) == 1:
             msg = f"Add video #{processed_numbers[0]}"
         else:
             msg = f"Add videos #{min(processed_numbers)}-{max(processed_numbers)}"
-        git_push_all(msg)
+        
+        print(f"\n📤 Pushing all changes...")
+        success = git_push_all(msg)
+        if success:
+            print(f"✅ Successfully pushed {len(processed_numbers)} videos")
+        else:
+            print(f"❌ Failed to push changes")
     else:
         print("😴 No videos processed successfully")
 
