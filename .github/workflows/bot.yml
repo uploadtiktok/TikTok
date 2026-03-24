@@ -2,24 +2,21 @@ name: TikTok Bot
 
 on:
   schedule:
-    # Run daily at 00:00 UTC (which is 01:00 Algeria time in winter, 00:00 in summer)
-    # Adjust as needed
-    - cron: '0 0 * * *'
-  workflow_dispatch:  # Manual trigger
+    - cron: '0 23 * * *'  # 00:00 Algeria time
+  workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     
     permissions:
-      contents: write  # Allow pushing to repository
+      contents: write  # ✅ هذا يعطي التوكن صلاحية الكتابة
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}  # ✅ التوكن التلقائي
     
     - name: Set up Python
       uses: actions/setup-python@v5
@@ -36,7 +33,7 @@ jobs:
     
     - name: Run bot
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # ✅ يمرر للكود
         GITHUB_REPO: ${{ github.repository }}
         GITHUB_BRANCH: ${{ github.ref_name }}
       run: |
@@ -49,4 +46,4 @@ jobs:
         git config --local user.name "GitHub Action"
         git add Videos/ rss.xml processed_urls.txt 2>/dev/null || true
         git diff --quiet && git diff --staged --quiet || git commit -m "Auto update from bot [skip ci]"
-        git push
+        git push  # ✅ يستخدم التوكن التلقائي للدفع
