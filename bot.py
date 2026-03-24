@@ -60,11 +60,11 @@ def get_algeria_time():
 def git_commit(file_path, commit_msg):
     """Commit file to git"""
     try:
-        subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], check=True)
-        subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], check=True)
-        subprocess.run(['git', 'add', file_path], check=True)
-        subprocess.run(['git', 'commit', '-m', commit_msg, '--allow-empty'], check=True)
-        subprocess.run(['git', 'push'], check=True)
+        subprocess.run(['git', 'config', '--global', 'user.email', 'action@github.com'], check=True, capture_output=True)
+        subprocess.run(['git', 'config', '--global', 'user.name', 'GitHub Action'], check=True, capture_output=True)
+        subprocess.run(['git', 'add', file_path], check=True, capture_output=True)
+        subprocess.run(['git', 'commit', '-m', commit_msg, '--allow-empty'], check=True, capture_output=True)
+        subprocess.run(['git', 'push'], check=True, capture_output=True)
         print(f"✅ Committed: {file_path}")
         return True
     except Exception as e:
@@ -76,15 +76,23 @@ def git_commit(file_path, commit_msg):
 # ============================================
 
 def get_video_duration(url):
+    """Get video duration with anti-bot measures"""
     try:
-        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as ydl:
+        opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extractor_args': {'youtube': {'skip': ['dash', 'hls']}},
+            'sleep_interval': 3,
+        }
+        with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
             return info.get('duration', 0)
-    except:
+    except Exception as e:
+        print(f"⚠️ Duration error: {e}")
         return None
 
 def download_video_to_repo(url, filename):
-    """Download video directly to Videos folder"""
+    """Download video directly to Videos folder with anti-bot measures"""
     video_path = os.path.join(VIDEOS_DIR, filename)
     
     opts = {
@@ -92,6 +100,11 @@ def download_video_to_repo(url, filename):
         'outtmpl': video_path,
         'quiet': True,
         'no_warnings': True,
+        'extractor_args': {'youtube': {'skip': ['dash', 'hls']}},
+        'throttledratelimit': 1000000,
+        'sleep_interval': 5,
+        'max_sleep_interval': 10,
+        'sleep_interval_requests': 2,
     }
     try:
         if os.path.exists(video_path):
