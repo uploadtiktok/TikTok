@@ -22,11 +22,11 @@ GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 # Telegram Settings
 TELEGRAM_URL = "https://t.me/s/zapiershorts"
 
-# File Paths
+# File Paths (in repository root)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, "Videos")
 RSS_FILE = os.path.join(BASE_DIR, "rss.xml")
-PROCESSED_LOG = os.path.join(BASE_DIR, "processed_urls.txt")
+PROCESSED_LOG = os.path.join(BASE_DIR, "lastURL.txt")  # Changed to lastURL.txt
 
 # Create Videos directory if not exists
 os.makedirs(VIDEOS_DIR, exist_ok=True)
@@ -76,7 +76,6 @@ def git_commit(file_path, commit_msg):
 
 def extract_video_id(url):
     """Extract video ID from Telegram video URL"""
-    # Telegram video URLs look like: https://t.me/zapiershorts/123
     match = re.search(r'/zapiershorts/(\d+)', url)
     if match:
         return match.group(1)
@@ -293,7 +292,7 @@ async def process_video(post):
     # Commit all changes to GitHub
     git_commit(VIDEOS_DIR, f"Add video: {title[:50]}")
     git_commit(RSS_FILE, "Update RSS feed")
-    git_commit(PROCESSED_LOG, "Update processed URL")
+    git_commit(PROCESSED_LOG, "Update last URL")
     
     print(f"✅ Done: {video_id}")
     return True
@@ -303,6 +302,8 @@ async def main():
     print(f"📦 Repo: {GITHUB_REPO}")
     print(f"📁 Videos dir: {VIDEOS_DIR}")
     print(f"📡 Telegram: {TELEGRAM_URL}")
+    print(f"📄 RSS: {RSS_FILE}")
+    print(f"📝 Last URL: {PROCESSED_LOG}")
     
     if not GITHUB_TOKEN:
         print("❌ GITHUB_TOKEN not set")
