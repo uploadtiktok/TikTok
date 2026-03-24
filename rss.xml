@@ -3,17 +3,29 @@
   <channel>
     <title>مقاطع بجاد الأثري - Shorts</title>
     <link>https://github.com/uploadtiktok/TikTok</link>
-    <description>آخر مقاطع الـ Shorts</description>
+    <description>آخر مقاطع الـ Shorts للشيخ محمد بن شمس الدين</description>
     <language>ar-sa</language>
+    <lastBuildDate>Tue, 24 Mar 2026 23:03:26 +0100</lastBuildDate>
     <item>
       <title>ما هو كتاب شمس المعارف وما حكم قراءته #محمد_بن_شمس_الدين</title>
       <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/49.mp4</link>
       <pubDate>Tue, 24 Mar 2026 22:54:40 +0100</pubDate>
+      <enclosure url="" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/49.mp4</guid>
     </item>
     <item>
       <title>ما هو كتاب شمس المعارف وما حكم قراءته</title>
       <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/49.mp4</link>
       <pubDate>Tue, 24 Mar 2026 22:57:51 +0100</pubDate>
+      <enclosure url="" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/49.mp4</guid>
+    </item>
+    <item>
+      <title>ما هو كتاب شمس المعارف وما حكم قراءته</title>
+      <link>https://t.me/zapiershorts/49</link>
+      <pubDate>Tue, 24 Mar 2026 23:03:26 +0100</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/49.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://t.me/zapiershorts/49</guid>
     </item>
   </channel>
 </rss>
