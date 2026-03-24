@@ -39,7 +39,10 @@ def get_last_post_number():
         return 0
     try:
         with open(PROCESSED_LOG, "r", encoding="utf-8") as f:
-            return int(f.read().strip())
+            content = f.read().strip()
+            if content:
+                return int(content)
+            return 0
     except:
         return 0
 
@@ -77,7 +80,7 @@ def git_commit(file_path, commit_msg):
 # TELEGRAM FUNCTIONS
 # ============================================
 
-def fetch_telegram_posts(url, count=50):
+def fetch_latest_posts(url, count=50):
     """Fetch latest posts from Telegram channel (newest first)"""
     response = requests.get(url)
     response.raise_for_status()
@@ -94,7 +97,6 @@ def fetch_telegram_posts(url, count=50):
         if not link.startswith('https://'):
             link = 'https://t.me' + link
         
-        # Extract post number
         post_number = extract_post_number(link)
         
         video_elem = msg.find('video')
@@ -229,27 +231,32 @@ def update_rss(title, video_url, video_filename):
 # ============================================
 
 def get_new_videos_from_telegram():
-    """Get new videos from Telegram channel (only posts with number > last_number)"""
+    """Get new videos from Telegram channel"""
     last_number = get_last_post_number()
     
+    print(f"📌 Last number: {last_number}")
+    
     # Fetch posts (newest first)
-    all_posts = fetch_telegram_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK)
+    all_posts = fetch_latest_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK)
     
     if not all_posts:
+        print("😴 No posts found")
         return []
     
-    # Filter posts with number > last_number
+    # If no last number (first run), take only the newest post
+    if last_number == 0:
+        newest = [all_posts[0]]
+        print(f"🆕 First run, taking latest post: #{newest[0]['number']}")
+        return newest
+    
+    # Find posts with number > last_number
     new_posts = [p for p in all_posts if p['number'] > last_number]
     
     if not new_posts:
-        if last_number == 0:
-            print("😴 No videos found in channel")
-        else:
-            print(f"😴 No new videos since post #{last_number}")
+        print(f"😴 No new posts (last: {last_number})")
         return []
     
-    print(f"🆕 Found {len(new_posts)} new video(s) (numbers > {last_number})")
-    print(f"   New numbers: {[p['number'] for p in new_posts]}")
+    print(f"🆕 Found {len(new_posts)} new post(s): {[p['number'] for p in new_posts]}")
     
     # Sort by number ascending (oldest first)
     new_posts.sort(key=lambda x: x['number'])
@@ -263,24 +270,20 @@ async def process_video(post):
     title = post['title']
     post_link = post['link']
     
-    print(f"\n🔍 Post #{post_number}: {title[:50]}...")
+    print(f"\n🎬 Post #{post_number}: {title[:50]}...")
     
     filename = f"{post_number}.mp4"
     video_path = download_video(video_url, filename)
     
     if not video_path:
-        print("❌ Download failed, not marking as processed")
+        print(f"❌ Download failed for #{post_number}, skipping")
         return False
     
     print(f"✅ Downloaded: {filename}")
     
-    # Update RSS
     update_rss(title, post_link, filename)
-    
-    # Save last processed post number
     save_last_post_number(post_number)
     
-    # Commit all changes to GitHub
     git_commit(VIDEOS_DIR, f"Add video #{post_number}")
     git_commit(RSS_FILE, "Update RSS feed")
     git_commit(PROCESSED_LOG, f"Update last number to {post_number}")
@@ -289,12 +292,10 @@ async def process_video(post):
     return True
 
 async def main():
-    print("🚀 Bot started (Telegram Source)")
+    print("🚀 Bot started")
     print(f"📦 Repo: {GITHUB_REPO}")
     print(f"📁 Videos dir: {VIDEOS_DIR}")
     print(f"📡 Telegram: {TELEGRAM_URL}")
-    print(f"📄 RSS: {RSS_FILE}")
-    print(f"📝 Last number: {get_last_post_number()}")
     
     if not GITHUB_TOKEN:
         print("❌ GITHUB_TOKEN not set")
@@ -303,10 +304,9 @@ async def main():
     new_videos = get_new_videos_from_telegram()
     
     if not new_videos:
-        print("😴 No new videos")
+        print("🏁 No new videos, exiting")
         return
     
-    # Process videos in order (oldest first)
     for post in new_videos:
         await process_video(post)
     
