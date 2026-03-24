@@ -22,11 +22,11 @@ GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 # Telegram Settings
 TELEGRAM_URL = "https://t.me/s/zapiershorts"
 
-# File Paths (in repository root)
+# File Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, "Videos")
 RSS_FILE = os.path.join(BASE_DIR, "rss.xml")
-PROCESSED_LOG = os.path.join(BASE_DIR, "lastURL.txt")  # Changed to lastURL.txt
+PROCESSED_LOG = os.path.join(BASE_DIR, "lastURL.txt")
 
 # Create Videos directory if not exists
 os.makedirs(VIDEOS_DIR, exist_ok=True)
@@ -74,13 +74,6 @@ def git_commit(file_path, commit_msg):
 # TELEGRAM FUNCTIONS
 # ============================================
 
-def extract_video_id(url):
-    """Extract video ID from Telegram video URL"""
-    match = re.search(r'/zapiershorts/(\d+)', url)
-    if match:
-        return match.group(1)
-    return None
-
 def fetch_telegram_posts(url, count=50, since_link=None):
     """Fetch latest posts from Telegram channel"""
     response = requests.get(url)
@@ -103,32 +96,26 @@ def fetch_telegram_posts(url, count=50, since_link=None):
         if since_link and link == since_link:
             break
         
-        # Find video elements
+        # Find video element directly
         video_elem = msg.find('video')
         if not video_elem:
             continue
         
-        # Get video source URL
-        video_src = None
-        source = video_elem.find('source')
-        if source and source.get('src'):
-            video_src = source.get('src')
-        
-        if not video_src:
+        # Get video src URL
+        video_url = video_elem.get('src')
+        if not video_url:
             continue
         
         # Get text content
         text_div = msg.find('div', class_='tgme_widget_message_text')
         text = text_div.get_text() if text_div else ''
         
-        # Extract video ID from link
-        video_id = extract_video_id(link)
-        if not video_id:
-            video_id = str(len(posts) + 1)
+        # Extract video ID from link (e.g., /zapiershorts/26)
+        video_id = link.split('/')[-1] if link else str(len(posts) + 1)
         
         posts.append({
             'link': link,
-            'video_url': video_src,
+            'video_url': video_url,
             'video_id': video_id,
             'title': text[:100] if text else f'Video {video_id}'
         })
@@ -271,7 +258,7 @@ async def process_video(post):
     post_link = post['link']
     
     print(f"\n🔍 {title[:50]}...")
-    print(f"   🎬 Telegram: {post_link}")
+    print(f"   🎬 Video ID: {video_id}")
     
     # Download video
     filename = f"{video_id}.mp4"
@@ -315,7 +302,7 @@ async def main():
         print("😴 No new videos")
         return
     
-    # Process videos in order (oldest first)
+    # Process videos from oldest to newest
     for post in reversed(new_videos):
         await process_video(post)
     
