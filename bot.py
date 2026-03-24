@@ -240,14 +240,14 @@ def get_existing_rss_items():
 
 def update_rss(title, video_url, video_filename):
     """Update RSS and save to GitHub"""
-    title_with_hash = f"{title} #محمد_بن_شمس_الدين"
+    # استخدام العنوان الأصلي بدون أي تعديل
     items = get_existing_rss_items()
     
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
     
     new_item = {
-        'title': title_with_hash,
-        'link': video_url,
+        'title': title,  # العنوان الأصلي كما هو
+        'link': raw_url,
         'enclosure_url': raw_url,
         'pub_date': get_algeria_time()
     }
