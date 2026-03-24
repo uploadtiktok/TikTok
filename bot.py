@@ -9,178 +9,373 @@ import pytz
 from bs4 import BeautifulSoup
 
 # ============================================
-# الإعدادات الأساسية
+# CONFIGURATION
 # ============================================
+
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
 GITHUB_REPO = os.environ.get('GITHUB_REPO', 'uploadtiktok/TikTok')
 GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 TELEGRAM_URL = "https://t.me/s/zapiershorts"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 VIDEOS_DIR = os.path.join(BASE_DIR, "Videos")
+RSS_FILE = os.path.join(BASE_DIR, "rss.xml")
+PROCESSED_LOG = os.path.join(BASE_DIR, "lastURL.txt")
+
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 
-MAX_RSS_ITEMS = 15
+MAX_RSS_ITEMS = 3
+MAX_VIDEOS_CHECK = 20
 
 # ============================================
-# دوال GitHub API
+# GITHUB API FUNCTIONS
 # ============================================
+
 def github_api_request(endpoint, method='GET', data=None):
+    """Send request to GitHub API"""
     url = f"https://api.github.com/repos/{GITHUB_REPO}/{endpoint}"
-    headers = {'Authorization': f'token {GITHUB_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
-    if method == 'GET': response = requests.get(url, headers=headers)
-    elif method == 'PUT': response = requests.put(url, headers=headers, json=data)
+    headers = {
+        'Authorization': f'token {GITHUB_TOKEN}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    
+    if method == 'GET':
+        response = requests.get(url, headers=headers)
+    elif method == 'PUT':
+        response = requests.put(url, headers=headers, json=data)
+    elif method == 'POST':
+        response = requests.post(url, headers=headers, json=data)
+    
     response.raise_for_status()
     return response.json()
 
 def get_file_content(path):
+    """Get file content from GitHub"""
     try:
-        res = github_api_request(f"contents/{path}")
-        return base64.b64decode(res['content']).decode('utf-8'), res['sha']
-    except: return None, None
+        response = github_api_request(f"contents/{path}")
+        content = base64.b64decode(response['content']).decode('utf-8')
+        return content, response['sha']
+    except:
+        return None, None
 
-def update_file(path, content, msg, sha=None):
-    encoded = base64.b64encode(content.encode('utf-8')).decode('utf-8')
-    data = {'message': msg, 'content': encoded, 'branch': GITHUB_BRANCH}
-    if sha: data['sha'] = sha
-    try: github_api_request(f"contents/{path}", 'PUT', data); return True
-    except: return False
+def update_file(path, content, commit_msg, sha=None):
+    """Update or create file on GitHub"""
+    encoded_content = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+    
+    data = {
+        'message': commit_msg,
+        'content': encoded_content,
+        'branch': GITHUB_BRANCH
+    }
+    
+    if sha:
+        data['sha'] = sha
+    
+    try:
+        github_api_request(f"contents/{path}", 'PUT', data)
+        return True
+    except Exception as e:
+        print(f"❌ Failed to update {path}: {e}")
+        return False
+
+def upload_video(video_path, filename):
+    """Upload video file to GitHub"""
+    try:
+        with open(video_path, 'rb') as f:
+            content = base64.b64encode(f.read()).decode('utf-8')
+        
+        data = {
+            'message': f'Add video {filename}',
+            'content': content,
+            'branch': GITHUB_BRANCH
+        }
+        
+        # Check if file already exists
+        try:
+            existing = github_api_request(f"contents/Videos/{filename}")
+            data['sha'] = existing['sha']
+        except:
+            pass
+        
+        github_api_request(f"contents/Videos/{filename}", 'PUT', data)
+        return True
+    except Exception as e:
+        print(f"❌ Failed to upload video: {e}")
+        return False
 
 # ============================================
-# منطق الـ RSS الصارم (GitHub Link Only)
+# UTILITY FUNCTIONS
 # ============================================
-def get_existing_items():
-    """قراءة العناصر السابقة واستخراج رابط GitHub فقط"""
+
+def get_last_post_number():
+    """Get last post number from GitHub"""
+    content, _ = get_file_content("lastURL.txt")
+    if content:
+        try:
+            return int(content.strip())
+        except:
+            return 0
+    return 0
+
+def save_last_post_number(number):
+    """Save last post number to GitHub"""
+    content = str(number)
+    _, sha = get_file_content("lastURL.txt")
+    return update_file("lastURL.txt", content, f"Update last post to {number}", sha)
+
+def extract_post_number(link):
+    try:
+        return int(link.split('/')[-1])
+    except:
+        return 0
+
+def get_algeria_time():
+    tz = pytz.timezone('Africa/Algiers')
+    return datetime.now(tz).strftime('%a, %d %b %Y %H:%M:%S +0100')
+
+# ============================================
+# TELEGRAM FUNCTIONS
+# ============================================
+
+def fetch_latest_posts(url, count=50):
+    response = requests.get(url)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    messages = soup.find_all('div', class_='tgme_widget_message_wrap')
+    
+    posts = []
+    for msg in messages:
+        link_tag = msg.find('a', class_='tgme_widget_message_date')
+        if not link_tag:
+            continue
+        link = link_tag.get('href')
+        if not link.startswith('https://'):
+            link = 'https://t.me' + link
+        
+        post_number = extract_post_number(link)
+        
+        video_elem = msg.find('video')
+        if not video_elem:
+            continue
+        
+        video_url = video_elem.get('src')
+        if not video_url:
+            continue
+        
+        text_div = msg.find('div', class_='tgme_widget_message_text')
+        text = text_div.get_text() if text_div else ''
+        
+        posts.append({
+            'link': link,
+            'number': post_number,
+            'video_url': video_url,
+            'title': text[:100] if text else f'Video {post_number}'
+        })
+        
+        if len(posts) >= count:
+            break
+    
+    return posts
+
+# ============================================
+# VIDEO DOWNLOAD FUNCTIONS
+# ============================================
+
+def download_telegram_video(video_url, output_path):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(video_url, headers=headers, stream=True)
+        response.raise_for_status()
+        
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        return os.path.exists(output_path)
+    except Exception as e:
+        print(f"⚠️ Download failed: {e}")
+        return False
+
+def download_video(video_url, filename):
+    video_path = os.path.join(VIDEOS_DIR, filename)
+    if download_telegram_video(video_url, video_path):
+        return video_path
+    return None
+
+# ============================================
+# RSS FUNCTIONS
+# ============================================
+
+def get_existing_rss_items():
+    """Get existing RSS items from GitHub"""
     content, _ = get_file_content("rss.xml")
     items = []
-    if not content: return items
+    
+    if not content:
+        return items
+    
     try:
         root = ET.fromstring(content)
-        for item in root.findall('.//item'):
-            title = item.find('title').text if item.find('title') is not None else "Video"
+        channel = root.find('channel')
+        
+        for item in channel.findall('item'):
+            title = item.find('title').text if item.find('title') is not None else ''
+            link = item.find('link').text if item.find('link') is not None else ''
+            enclosure = item.find('enclosure')
+            enc_url = enclosure.get('url') if enclosure is not None else ''
+            pub_date = item.find('pubDate').text if item.find('pubDate') is not None else ''
             
-            # هنا يكمن الحل: نبحث في كل الوسوم عن الرابط الذي يحتوي على githubusercontent
-            # لضمان عدم سحب رابط تيليجرام بالخطأ من الملف القديم
-            raw_github_url = ""
-            candidates = [
-                item.find('link').text if item.find('link') is not None else "",
-                item.find('enclosure').get('url') if item.find('enclosure') is not None else "" if item.find('enclosure') is not None else ""
-            ]
-            for c in candidates:
-                if "githubusercontent" in c:
-                    raw_github_url = c
-                    break
-            
-            pub_date = item.find('pubDate').text if item.find('pubDate') is not None else ""
-            
-            if raw_github_url: # لا نضيف العنصر إلا إذا وجدنا رابط جيت هاب
-                items.append({'title': title, 'link': raw_github_url, 'pub_date': pub_date})
-    except: pass
+            items.append({
+                'title': title,
+                'link': link,
+                'enclosure_url': enc_url,
+                'pub_date': pub_date
+            })
+    except Exception as e:
+        print(f"⚠️ Error parsing RSS: {e}")
+    
     return items
 
-def update_rss(title, video_filename):
-    """توليد ملف RSS بهيكل نظيف جداً"""
-    items = get_existing_items()
+def update_rss(title, video_url, video_filename):
+    """Update RSS and save to GitHub"""
+    items = get_existing_rss_items()
     
-    # بناء رابط GitHub المباشر (Raw)
-    github_raw_link = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
+    # GitHub raw URL for the video
+    raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/Videos/{video_filename}"
     
-    tz = pytz.timezone('Africa/Algiers')
-    now = datetime.now(tz).strftime('%a, %d %b %Y %H:%M:%S +0100')
-
-    # إضافة العنصر الجديد مع رابط GitHub حصراً
-    items.append({'title': title, 'link': github_raw_link, 'pub_date': now})
+    # IMPORTANT: link = video_url (Telegram), enclosure_url = raw_url (GitHub raw)
+    new_item = {
+        'title': title,
+        'link': video_url,        # ← رابط Telegram الأصلي
+        'enclosure_url': raw_url,  # ← رابط GitHub raw للمقطع
+        'pub_date': get_algeria_time()
+    }
     
-    # حذف العناصر القديمة الزائدة
-    if len(items) > MAX_RSS_ITEMS: items.pop(0)
-
-    # بناء XML من الصفر بهيكل بسيط جداً
+    items.append(new_item)
+    
+    if len(items) > MAX_RSS_ITEMS:
+        items.pop(0)
+        print(f"🗑️ Removed oldest")
+    
+    # Create RSS XML
     rss = ET.Element('rss', version='2.0')
     channel = ET.SubElement(rss, 'channel')
-    ET.SubElement(channel, 'title').text = 'مقاطع بجاد الأثري - Shorts'
-    ET.SubElement(channel, 'link').text = f"https://github.com/{GITHUB_REPO}"
-    ET.SubElement(channel, 'description').text = 'آخر مقاطع الـ Shorts'
-    ET.SubElement(channel, 'language').text = 'ar-sa'
-
-    for item in items:
-        entry = ET.SubElement(channel, 'item')
-        ET.SubElement(entry, 'title').text = item['title']
-        ET.SubElement(entry, 'link').text = item['link'] # الرابط هو GitHub حصراً
-        ET.SubElement(entry, 'pubDate').text = item['pub_date']
-        # ملاحظة: تم حذف enclosure و guid تماماً بناءً على طلبك
-
-    # تحويل إلى نص منسق
-    xml_data = ET.tostring(rss, encoding='utf-8')
-    pretty_xml = minidom.parseString(xml_data).toprettyxml(indent="  ")
-    # تنظيف الأسطر الفارغة
-    final_rss = "\n".join([line for line in pretty_xml.split('\n') if line.strip()])
-
-    _, sha = get_file_content("rss.xml")
-    return update_file("rss.xml", final_rss, f"New Video: {video_filename}", sha)
-
-# ============================================
-# المعالجة الرئيسية
-# ============================================
-async def main():
-    if not GITHUB_TOKEN: 
-        print("❌ Token Missing"); return
-
-    # جلب آخر رقم معالج من ملف النص
-    last_content, _ = get_file_content("lastURL.txt")
-    last_processed_num = int(last_content.strip()) if last_content else 0
-
-    # جلب المنشورات من تيليجرام
-    res = requests.get(TELEGRAM_URL, headers={'User-Agent': 'Mozilla/5.0'})
-    soup = BeautifulSoup(res.text, 'html.parser')
     
-    new_posts = []
-    for msg in soup.find_all('div', class_='tgme_widget_message_wrap'):
-        date_link = msg.find('a', class_='tgme_widget_message_date')
-        if not date_link: continue
-        
-        post_url = date_link.get('href')
-        post_num = int(post_url.split('/')[-1])
-        
-        video_tag = msg.find('video')
-        if not video_tag or post_num <= last_processed_num: continue
-        
-        text_tag = msg.find('div', class_='tgme_widget_message_text')
-        title = text_tag.get_text()[:100] if text_tag else f"فيديو رقم {post_num}"
-        
-        new_posts.append({'num': post_num, 'vid_url': video_tag.get('src'), 'title': title})
+    ET.SubElement(channel, 'title').text = 'مقاطع بجاد الأثري - Shorts'
+    ET.SubElement(channel, 'link').text = f'https://github.com/{GITHUB_REPO}'
+    ET.SubElement(channel, 'description').text = 'آخر مقاطع الـ Shorts للشيخ محمد بن شمس الدين'
+    ET.SubElement(channel, 'language').text = 'ar-sa'
+    ET.SubElement(channel, 'lastBuildDate').text = get_algeria_time()
+    
+    for item in items:
+        elem = ET.SubElement(channel, 'item')
+        ET.SubElement(elem, 'title').text = item['title']
+        ET.SubElement(elem, 'link').text = item['link']           # Telegram URL
+        ET.SubElement(elem, 'pubDate').text = item['pub_date']
+        ET.SubElement(elem, 'enclosure', url=item['enclosure_url'], type='video/mp4')  # GitHub raw URL
+        ET.SubElement(elem, 'guid', isPermaLink='false').text = item['link']  # Telegram URL
+    
+    xml_str = minidom.parseString(ET.tostring(rss)).toprettyxml(indent="  ")
+    xml_lines = [line for line in xml_str.split('\n') if line.strip()]
+    rss_content = '\n'.join(xml_lines)
+    
+    # Save to GitHub
+    _, sha = get_file_content("rss.xml")
+    return update_file("rss.xml", rss_content, f"Update RSS with {video_filename}", sha)
 
-    # معالجة المنشورات الجديدة (من الأقدم للأحدث)
-    for p in sorted(new_posts, key=lambda x: x['num']):
-        filename = f"{p['num']}.mp4"
-        local_path = os.path.join(VIDEOS_DIR, filename)
-        
-        # 1. تحميل الفيديو
-        with open(local_path, 'wb') as f:
-            f.write(requests.get(p['vid_url']).content)
-            
-        # 2. رفع الفيديو إلى GitHub
-        with open(local_path, 'rb') as f:
-            content_encoded = base64.b64encode(f.read()).decode('utf-8')
-        
-        v_sha = None
-        try: v_sha = github_api_request(f"contents/Videos/{filename}")['sha']
-        except: pass
-        
-        github_api_request(f"contents/Videos/{filename}", 'PUT', {
-            'message': f'Upload Video {p["num"]}', 
-            'content': content_encoded, 
-            'sha': v_sha, 
-            'branch': GITHUB_BRANCH
-        })
+# ============================================
+# MAIN PROCESSING
+# ============================================
 
-        # 3. تحديث ملف الـ RSS (هنا يتم وضع رابط GitHub في خانة link)
-        if update_rss(p['title'], filename):
-            # 4. تحديث رقم آخر منشور
-            _, l_sha = get_file_content("lastURL.txt")
-            update_file("lastURL.txt", str(p['num']), f"Update last processed to {p['num']}", l_sha)
-            print(f"✅ Successfully processed video #{p['num']}")
-        
-        if os.path.exists(local_path): os.remove(local_path)
+def get_new_videos_from_telegram():
+    last_number = get_last_post_number()
+    print(f"📌 Last number from GitHub: {last_number}")
+    
+    all_posts = fetch_latest_posts(TELEGRAM_URL, MAX_VIDEOS_CHECK)
+    
+    if not all_posts:
+        print("😴 No posts found")
+        return []
+    
+    if last_number == 0:
+        newest = [all_posts[0]]
+        print(f"🆕 First run, taking latest post: #{newest[0]['number']}")
+        return newest
+    
+    new_posts = [p for p in all_posts if p['number'] > last_number]
+    
+    if not new_posts:
+        print(f"😴 No new posts (last: {last_number})")
+        return []
+    
+    print(f"🆕 Found {len(new_posts)} new post(s): {[p['number'] for p in new_posts]}")
+    new_posts.sort(key=lambda x: x['number'])
+    
+    return new_posts
+
+def process_video(post):
+    video_url = post['video_url']
+    post_number = post['number']
+    title = post['title']
+    post_link = post['link']
+    
+    print(f"\n🎬 Post #{post_number}: {title[:50]}...")
+    
+    filename = f"{post_number}.mp4"
+    video_path = download_video(video_url, filename)
+    
+    if not video_path:
+        print(f"❌ Download failed for #{post_number}, skipping")
+        return False
+    
+    print(f"✅ Downloaded: {filename}")
+    
+    # Upload video to GitHub
+    if not upload_video(video_path, filename):
+        return False
+    
+    # Update RSS
+    if not update_rss(title, post_link, filename):
+        return False
+    
+    # Update last post number
+    if not save_last_post_number(post_number):
+        return False
+    
+    # Clean up local file
+    os.remove(video_path)
+    
+    print(f"✅ Done: #{post_number}")
+    return True
+
+async def main():
+    print("🚀 Bot started")
+    print(f"📦 Repo: {GITHUB_REPO}")
+    print(f"📡 Telegram: {TELEGRAM_URL}")
+    
+    if not GITHUB_TOKEN:
+        print("❌ GITHUB_TOKEN not set")
+        return
+    
+    new_videos = get_new_videos_from_telegram()
+    
+    if not new_videos:
+        print("🏁 No new videos, exiting")
+        return
+    
+    # Process all videos
+    processed_numbers = []
+    for post in new_videos:
+        success = process_video(post)
+        if success:
+            processed_numbers.append(post['number'])
+    
+    if processed_numbers:
+        print(f"\n✅ Successfully processed {len(processed_numbers)} videos: {processed_numbers}")
+    else:
+        print("😴 No videos processed successfully")
 
 if __name__ == "__main__":
     asyncio.run(main())
