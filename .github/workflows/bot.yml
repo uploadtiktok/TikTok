@@ -46,5 +46,13 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add Videos/ rss.xml lastURL.txt 2>/dev/null || true
-        git diff --quiet && git diff --staged --quiet || git commit -m "Auto update from bot [skip ci]"
-        git push
+        
+        # Only commit and push if there are changes
+        if git diff --quiet && git diff --staged --quiet; then
+          echo "📝 No changes to commit"
+        else
+          git commit -m "Auto update from bot [skip ci]"
+          # Pull with rebase to avoid conflicts
+          git pull --rebase origin ${{ github.ref_name }} || true
+          git push origin ${{ github.ref_name }}
+        fi
