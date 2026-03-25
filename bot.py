@@ -151,6 +151,7 @@ def update_rss(new_items):
     _, sha = get_gh_file("rss.xml")
     save_gh_file("rss.xml", clean_xml, f"إضافة {len(new_items)} مقاطع", sha)
     print(f"✅ RSS updated with {len(new_items)} items")
+    return items  # إرجاع العناصر الجديدة في RSS
 
 # ============================================
 # TRACKER - يحتوي فقط على آخر 3 مقاطع
@@ -162,30 +163,12 @@ def get_processed_videos():
         return [line.strip() for line in content.splitlines() if line.strip()]
     return []
 
-def update_processed_videos(new_files):
-    """تحديث tracker ليحتوي فقط على آخر 3 مقاطع"""
-    existing = get_processed_videos()
-    
-    # إضافة الملفات الجديدة
-    all_files = existing + new_files
-    
-    # الاحتفاظ بآخر 3 فقط (الأحدث)
-    if len(all_files) > MAX_ITEMS:
-        all_files = all_files[-MAX_ITEMS:]
-    
-    new_content = "\n".join(all_files) + ("\n" if all_files else "")
+def save_processed_videos(files_list):
+    """حفظ قائمة الملفات مباشرة"""
+    new_content = "\n".join(files_list) + ("\n" if files_list else "")
     _, sha = get_gh_file("processed_videos.txt")
     save_gh_file("processed_videos.txt", new_content, "تحديث قائمة المقاطع المعالجة", sha)
-    print(f"📝 Tracker updated with {len(all_files)} files: {', '.join(all_files)}")
-
-def remove_from_processed_videos(files_to_remove):
-    """إزالة ملفات معينة من tracker"""
-    existing = get_processed_videos()
-    remaining = [f for f in existing if f not in files_to_remove]
-    new_content = "\n".join(remaining) + ("\n" if remaining else "")
-    _, sha = get_gh_file("processed_videos.txt")
-    save_gh_file("processed_videos.txt", new_content, "إزالة المقاطع القديمة من tracker", sha)
-    print(f"📝 Removed from tracker: {', '.join(files_to_remove)}")
+    print(f"📝 Tracker updated with {len(files_list)} files: {', '.join(files_list)}")
 
 # ============================================
 # MAIN
@@ -212,75 +195,88 @@ async def main():
     if not all_videos:
         print("⚠️ لا توجد مقاطع فيديو في مجلد Videos.")
         return
-    print(f"📹 Found {len(all_videos)} videos locally.")
+    print(f"📹 Found {len(all_videos)} videos locally: {', '.join(all_videos[:5])}...")
 
-    # 2. المقاطع التي تمت معالجتها (آخر 3)
-    processed = get_processed_videos()
-    print(f"📝 Currently tracked (last {MAX_ITEMS}): {processed}")
-
-    # 3. تحديد المقاطع الجديدة (غير الموجودة في tracker)
-    pending = [v for v in all_videos if v not in processed]
-    
-    if not pending:
-        print("✅ لا توجد مقاطع جديدة للمعالجة.")
-    else:
-        today_videos = pending[:VIDEOS_PER_DAY]
-        print(f"📌 سيتم معالجة {len(today_videos)} مقطع جديد: {', '.join(today_videos)}")
-
-        # إعداد عناصر RSS الجديدة
-        new_rss_items = []
-        for filename in today_videos:
-            title = Path(filename).stem
-            raw_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{filename}"
-            pub_date = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
-            new_rss_items.append({
-                'title': title,
-                'video_url': raw_url,
-                'pub_date': pub_date
-            })
-
-        # تحديث RSS
-        print("📡 Updating RSS...")
-        update_rss(new_rss_items)
-
-        # تحديث tracker (يضيف الجديد ويحتفظ بآخر 3 فقط)
-        update_processed_videos(today_videos)
-
-    # 4. بعد تحديث RSS، تحديد وحذف الملفات التي خرجت من RSS
+    # 2. قراءة RSS الحالي
     current_rss_urls = get_current_rss_urls()
     current_filenames_in_rss = {extract_filename_from_url(url) for url in current_rss_urls}
     print(f"📡 Current RSS contains: {current_filenames_in_rss}")
 
-    # الملفات التي يجب حذفها = الملفات الموجودة محلياً والموجودة في tracker
-    # ولكنها ليست في RSS الجديد
-    processed_set = set(get_processed_videos())
-    to_delete = [f for f in all_videos if f in processed_set and f not in current_filenames_in_rss]
-
-    if to_delete:
-        print(f"🗑️ سيتم حذف {len(to_delete)} مقطع قديم: {', '.join(to_delete)}")
-        for filename in to_delete:
-            try:
-                # حذف من GitHub
-                _, sha = get_gh_file(f"Videos/{filename}")
-                if sha:
-                    delete_gh_file(f"Videos/{filename}", sha, f"حذف قديم {filename}")
-                # حذف محلي
-                local_path = VIDEOS_DIR / filename
-                if local_path.exists():
-                    local_path.unlink()
-                print(f"🗑️ تم حذف {filename}")
-            except Exception as e:
-                print(f"❌ فشل حذف {filename}: {e}")
+    # 3. حذف الملفات القديمة أولاً (الموجودة محلياً ولكنها ليست في RSS)
+    # هذه الملفات هي التي خرجت من RSS في التشغيلات السابقة
+    if current_filenames_in_rss:
+        old_files_to_delete = [f for f in all_videos if f not in current_filenames_in_rss]
         
-        # إزالة الملفات المحذوفة من tracker
-        remove_from_processed_videos(to_delete)
+        if old_files_to_delete:
+            print(f"🗑️ سيتم حذف {len(old_files_to_delete)} مقطع قديم (خارج RSS): {', '.join(old_files_to_delete)}")
+            for filename in old_files_to_delete:
+                try:
+                    # حذف من GitHub
+                    _, sha = get_gh_file(f"Videos/{filename}")
+                    if sha:
+                        delete_gh_file(f"Videos/{filename}", sha, f"حذف قديم {filename}")
+                        print(f"🗑️ تم حذف {filename} من GitHub")
+                    # حذف محلي
+                    local_path = VIDEOS_DIR / filename
+                    if local_path.exists():
+                        local_path.unlink()
+                        print(f"🗑️ تم حذف {filename} من المجلد المحلي")
+                except Exception as e:
+                    print(f"❌ فشل حذف {filename}: {e}")
+            
+            # تحديث قائمة الملفات المحلية بعد الحذف
+            all_videos = get_local_videos()
+        else:
+            print("✅ لا توجد ملفات قديمة للحذف")
     else:
-        print("✅ لا توجد ملفات قديمة للحذف.")
+        print("📡 RSS فارغ، لا يوجد ملفات قديمة للحذف")
 
-    # إحصائيات نهائية
-    remaining = len([v for v in all_videos if v not in set(get_processed_videos())])
-    print(f"📊 المتبقي من المقاطع غير المعالجة: {remaining}")
-    print(f"📝 Tracker now contains: {get_processed_videos()}")
+    # 4. الآن معالجة المقاطع الجديدة
+    processed = get_processed_videos()
+    print(f"📝 Currently tracked: {processed}")
+    
+    # الملفات المتبقية بعد الحذف
+    pending = [v for v in all_videos if v not in processed]
+    
+    if not pending:
+        print("✅ لا توجد مقاطع جديدة للمعالجة")
+        # تحديث tracker ليطابق RSS
+        if current_filenames_in_rss:
+            new_tracker = list(current_filenames_in_rss)
+            save_processed_videos(new_tracker)
+        return
+
+    # معالجة المقاطع الجديدة
+    today_videos = pending[:VIDEOS_PER_DAY]
+    print(f"📌 سيتم معالجة {len(today_videos)} مقطع جديد: {', '.join(today_videos)}")
+
+    # إعداد عناصر RSS الجديدة
+    new_rss_items = []
+    for filename in today_videos:
+        title = Path(filename).stem
+        raw_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{filename}"
+        pub_date = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
+        new_rss_items.append({
+            'title': title,
+            'video_url': raw_url,
+            'pub_date': pub_date
+        })
+
+    # تحديث RSS
+    print("📡 Updating RSS...")
+    updated_items = update_rss(new_rss_items)
+    
+    # استخراج أسماء الملفات من RSS الجديد
+    updated_filenames = []
+    for item in updated_items:
+        filename = extract_filename_from_url(item['video_url'])
+        updated_filenames.append(filename)
+    
+    # تحديث tracker ليطابق RSS الجديد (آخر 3 مقاطع)
+    save_processed_videos(updated_filenames)
+    
+    print(f"✅ تمت معالجة {len(today_videos)} مقاطع جديدة")
+    print(f"📝 Tracker now contains: {updated_filenames}")
 
 if __name__ == "__main__":
     asyncio.run(main())
