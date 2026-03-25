@@ -1,12 +1,12 @@
 import asyncio
-import requests
 import os
 import base64
+import requests
 from xml.dom import minidom
 from xml.etree import ElementTree as ET
 from datetime import datetime
 import pytz
-from bs4 import BeautifulSoup
+from pathlib import Path
 
 # ============================================
 # CONFIGURATION
@@ -15,13 +15,12 @@ TOKEN = os.environ.get('GITHUB_TOKEN', '')
 REPO = os.environ.get('GITHUB_REPO', 'uploadtiktok/TikTok')
 BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
-TELEGRAM_URL = "https://t.me/s/zapiershorts"
+BASE_DIR = Path(__file__).parent
+VIDEOS_DIR = BASE_DIR / "Videos"
+VIDEOS_DIR.mkdir(exist_ok=True)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-VIDEOS_DIR = os.path.join(BASE_DIR, "Videos")
-os.makedirs(VIDEOS_DIR, exist_ok=True)
-
-MAX_ITEMS = 15
+MAX_ITEMS = 3                # RSS يحتوي فقط على 3 عناصر
+VIDEOS_PER_DAY = 3           # عدد المقاطع التي تُضاف يومياً
 
 # ============================================
 # GITHUB API FUNCTIONS
@@ -44,7 +43,7 @@ def get_gh_file(path):
         res = gh_api(f"contents/{path}")
         content = base64.b64decode(res['content']).decode('utf-8')
         return content, res['sha']
-    except:
+    except Exception:
         return None, None
 
 def save_gh_file(path, content, msg, sha=None):
@@ -54,147 +53,162 @@ def save_gh_file(path, content, msg, sha=None):
         data['sha'] = sha
     return gh_api(f"contents/{path}", 'PUT', data)
 
+def delete_gh_file(path, sha, msg):
+    url = f"https://api.github.com/repos/{REPO}/contents/{path}"
+    headers = {
+        'Authorization': f'token {TOKEN}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    data = {
+        'message': msg,
+        'sha': sha,
+        'branch': BRANCH
+    }
+    r = requests.delete(url, headers=headers, json=data)
+    r.raise_for_status()
+    return r.json()
+
 # ============================================
-# RSS LOGIC (FIXED & FULL STRUCTURE)
+# RSS UPDATE (يحتفظ فقط بآخر 3 عناصر)
 # ============================================
-def update_rss_full(title, telegram_link, video_filename):
-    """تحديث ملف RSS مع توزيع الروابط بدقة: جيت هاب للرابط وتيليجرام للمرفقات"""
+def update_rss(new_items):
+    """
+    new_items: قائمة من القواميس تحتوي على title, video_url, pub_date.
+    """
     old_content, _ = get_gh_file("rss.xml")
     items = []
-    
+
+    # قراءة العناصر الحالية
     if old_content:
         try:
             root = ET.fromstring(old_content)
             for item in root.findall('.//item'):
-                c_link = item.find('link').text if item.find('link') is not None else ""
+                link = item.find('link').text if item.find('link') is not None else ""
                 enc_node = item.find('enclosure')
-                c_enc = enc_node.get('url') if enc_node is not None else ""
-                
-                # فرز الروابط لاسترجاع البيانات القديمة بشكل صحيح
-                g_link = c_link if "githubusercontent" in c_link else c_enc
-                t_link = c_enc if "t.me" in c_enc else c_link
-                
-                if g_link:  # نضمن وجود رابط جيت هاب على الأقل
+                enc_url = enc_node.get('url') if enc_node is not None else ""
+                video_url = link if link else enc_url
+                if video_url:
                     items.append({
                         'title': item.find('title').text,
-                        'github_url': g_link,
-                        'telegram_url': t_link,
+                        'video_url': video_url,
                         'pub_date': item.find('pubDate').text if item.find('pubDate') is not None else ""
                     })
-        except:
+        except Exception:
             pass
 
-    # إنشاء رابط GitHub Raw المباشر للفيديو الجديد
-    new_github_raw_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{video_filename}"
-    
-    # إضافة العنصر الجديد مع التأكد من استخدام المتغير الصحيح
-    items.append({
-        'title': title,
-        'github_url': new_github_raw_url,
-        'telegram_url': telegram_link,
-        'pub_date': datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
-    })
-    
-    if len(items) > MAX_ITEMS:
-        items.pop(0)
+    # إضافة العناصر الجديدة
+    items.extend(new_items)
 
-    # بناء الهيكل النهائي للـ XML
+    # الاحتفاظ بآخر MAX_ITEMS عنصر فقط (الأحدث)
+    if len(items) > MAX_ITEMS:
+        items = items[-MAX_ITEMS:]
+
+    # بناء XML
     rss = ET.Element('rss', version='2.0')
     channel = ET.SubElement(rss, 'channel')
-    ET.SubElement(channel, 'title').text = 'مقاطع بجاد الأثري - Shorts'
+    ET.SubElement(channel, 'title').text = 'مقاطع الفيديو - Shorts'
     ET.SubElement(channel, 'link').text = f"https://github.com/{REPO}"
     ET.SubElement(channel, 'language').text = 'ar-sa'
 
-    for i in items:
+    for item in items:
         node = ET.SubElement(channel, 'item')
-        ET.SubElement(node, 'title').text = i['title']
-        ET.SubElement(node, 'link').text = i['github_url']  # الرابط المباشر
-        ET.SubElement(node, 'pubDate').text = i['pub_date']
-        ET.SubElement(node, 'enclosure', url=i['telegram_url'], type='video/mp4') # تيليجرام
-        ET.SubElement(node, 'guid', isPermaLink='false').text = i['telegram_url'] # تيليجرام
+        ET.SubElement(node, 'title').text = item['title']
+        ET.SubElement(node, 'link').text = item['video_url']
+        ET.SubElement(node, 'pubDate').text = item['pub_date']
+        ET.SubElement(node, 'enclosure', url=item['video_url'], type='video/mp4')
+        ET.SubElement(node, 'guid', isPermaLink='false').text = item['video_url']
 
-    # تنسيق الـ XML
-    xml_out = minidom.parseString(ET.tostring(rss, encoding='utf-8')).toprettyxml(indent="  ")
-    final_xml = "\n".join([line for line in xml_out.split('\n') if line.strip()])
-    
+    xml_str = ET.tostring(rss, encoding='utf-8')
+    dom = minidom.parseString(xml_str)
+    pretty_xml = dom.toprettyxml(indent="  ")
+    clean_xml = "\n".join(line for line in pretty_xml.split('\n') if line.strip())
+
     _, sha = get_gh_file("rss.xml")
-    save_gh_file("rss.xml", final_xml, f"Add {video_filename}", sha)
+    save_gh_file("rss.xml", clean_xml, f"إضافة {len(new_items)} مقاطع", sha)
 
 # ============================================
-# MAIN EXECUTION
+# TRACKER (المقاطع التي تمت معالجتها)
 # ============================================
+def get_processed_videos():
+    content, _ = get_gh_file("processed_videos.txt")
+    if content:
+        return set(line.strip() for line in content.splitlines() if line.strip())
+    return set()
+
+def update_processed_videos(new_files):
+    existing = get_processed_videos()
+    existing.update(new_files)
+    new_content = "\n".join(sorted(existing)) + ("\n" if existing else "")
+    _, sha = get_gh_file("processed_videos.txt")
+    save_gh_file("processed_videos.txt", new_content, "تحديث قائمة المقاطع المعالجة", sha)
+
+# ============================================
+# MAIN
+# ============================================
+def get_local_videos():
+    video_files = list(VIDEOS_DIR.glob("*.mp4"))
+    video_files.sort(key=lambda p: p.name)  # ترتيب تصاعدي حسب الاسم
+    return [f.name for f in video_files]
+
 async def main():
     if not TOKEN:
-        print("❌ Error: GITHUB_TOKEN is missing"); return
-    
-    # جلب آخر رقم معالج
-    last_val, _ = get_gh_file("lastURL.txt")
-    last_id = int(last_val.strip()) if last_val else 0
+        print("❌ خطأ: GITHUB_TOKEN غير موجود.")
+        return
 
-    # سحب بيانات تيليجرام
-    try:
-        r = requests.get(TELEGRAM_URL, headers={'User-Agent': 'Mozilla/5.0'})
-        soup = BeautifulSoup(r.text, 'html.parser')
-    except Exception as e:
-        print(f"❌ Scraper error: {e}"); return
+    # 1. قائمة جميع المقاطع محلياً
+    all_videos = get_local_videos()
+    if not all_videos:
+        print("⚠️ لا توجد مقاطع فيديو في مجلد Videos.")
+        return
 
-    new_posts = []
-    for msg in soup.find_all('div', class_='tgme_widget_message_wrap'):
-        a_tag = msg.find('a', class_='tgme_widget_message_date')
-        if not a_tag: continue
-        
-        post_link = a_tag.get('href')
-        num = int(post_link.split('/')[-1])
-        vid = msg.find('video')
-        
-        if vid and num > last_id:
-            txt = msg.find('div', class_='tgme_widget_message_text')
-            new_posts.append({
-                'id': num, 
-                'v_src': vid.get('src'), 
-                't_link': post_link,
-                'title': txt.get_text()[:100] if txt else f"Video {num}"
-            })
+    # 2. المقاطع التي تمت معالجتها سابقاً
+    processed = get_processed_videos()
+    pending = [v for v in all_videos if v not in processed]
+    if not pending:
+        print("✅ جميع المقاطع تمت معالجتها مسبقاً.")
+        return
 
-    # معالجة الفيديوهات
-    for p in sorted(new_posts, key=lambda x: x['id']):
-        fname = f"{p['id']}.mp4"
-        fpath = os.path.join(VIDEOS_DIR, fname)
-        
-        print(f"🎬 Processing Video #{p['id']}...")
-        
-        # تحميل محلي مؤقت
-        with open(fpath, 'wb') as f:
-            f.write(requests.get(p['v_src']).content)
-        
-        # رفع الفيديو لـ GitHub
-        with open(fpath, 'rb') as f:
-            v_encoded = base64.b64encode(f.read()).decode('utf-8')
-        
-        v_sha = None
-        try:
-            v_sha = gh_api(f"contents/Videos/{fname}")['sha']
-        except:
-            pass
-        
-        gh_api(f"contents/Videos/{fname}", 'PUT', {
-            'message': f'Upload Vid {p["id"]}', 
-            'content': v_encoded, 
-            'sha': v_sha, 
-            'branch': BRANCH
+    # 3. اختيار أول 3 مقاطع فقط
+    today_videos = pending[:VIDEOS_PER_DAY]
+    print(f"📌 سيتم معالجة {len(today_videos)} مقطع اليوم.")
+
+    # 4. إعداد عناصر RSS
+    new_rss_items = []
+    for filename in today_videos:
+        title = Path(filename).stem
+        raw_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{filename}"
+        pub_date = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
+        new_rss_items.append({
+            'title': title,
+            'video_url': raw_url,
+            'pub_date': pub_date
         })
 
-        # تحديث RSS
-        update_rss_full(p['title'], p['t_link'], fname)
-        
-        # تحديث رقم التعقب
-        _, l_sha = get_gh_file("lastURL.txt")
-        save_gh_file("lastURL.txt", str(p['id']), f"Update last to {p['id']}", l_sha)
-        
-        if os.path.exists(fpath):
-            os.remove(fpath)
-            
-        print(f"✅ Successfully finished video {p['id']}")
+    # 5. تحديث RSS
+    update_rss(new_rss_items)
+
+    # 6. حذف الملفات من GitHub ومحلياً
+    for filename in today_videos:
+        try:
+            _, sha = get_gh_file(f"Videos/{filename}")
+            if sha:
+                delete_gh_file(f"Videos/{filename}", sha, f"حذف {filename} بعد الإضافة")
+                print(f"🗑️ تم حذف {filename} من GitHub.")
+            else:
+                print(f"⚠️ لم يتم العثور على {filename} على GitHub.")
+        except Exception as e:
+            print(f"❌ فشل حذف {filename} من GitHub: {e}")
+
+        # حذف محلي
+        local_path = VIDEOS_DIR / filename
+        if local_path.exists():
+            local_path.unlink()
+            print(f"🗑️ تم حذف {filename} من المجلد المحلي.")
+
+    # 7. تحديث tracker
+    update_processed_videos(today_videos)
+
+    print(f"✅ تمت معالجة {len(today_videos)} مقاطع. المتبقي: {len(pending) - len(today_videos)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
