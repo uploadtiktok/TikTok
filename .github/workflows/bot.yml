@@ -1,41 +1,20 @@
-name: TikTok Bot
-
+name: Daily Video RSS Update
 on:
   schedule:
-    - cron: '0 23 * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *'   # كل يوم عند منتصف الليل
+  workflow_dispatch:      # للتشغيل اليدوي
 
 jobs:
-  run-bot:
+  update:
     runs-on: ubuntu-latest
-    
-    permissions:
-      contents: write
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.PAT_TOKEN }}
-        fetch-depth: 0
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
-    
-    - name: Create Videos directory
-      run: |
-        mkdir -p Videos
-    
-    - name: Run bot
-      env:
-        GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-        GITHUB_REPO: ${{ github.repository }}
-        GITHUB_BRANCH: ${{ github.ref_name }}
-      run: |
-        python bot.py
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - run: pip install requests pytz
+      - run: python process_videos.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_BRANCH: main
