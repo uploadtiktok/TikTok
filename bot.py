@@ -11,7 +11,7 @@ from pathlib import Path
 # ============================================
 # CONFIGURATION
 # ============================================
-TOKEN = os.environ.get('GITHUB_TOKEN', '')
+TOKEN = os.environ.get('GITHUB_TOKEN', os.environ.get('PAT_TOKEN', ''))  # دعم كلا المتغيرين
 REPO = os.environ.get('GITHUB_REPO', 'uploadtiktok/TikTok')
 BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
@@ -19,8 +19,8 @@ BASE_DIR = Path(__file__).parent
 VIDEOS_DIR = BASE_DIR / "Videos"
 VIDEOS_DIR.mkdir(exist_ok=True)
 
-MAX_ITEMS = 3                # RSS يحتوي فقط على 3 عناصر
-VIDEOS_PER_DAY = 3           # عدد المقاطع التي تُضاف يومياً
+MAX_ITEMS = 3
+VIDEOS_PER_DAY = 3
 
 # ============================================
 # GITHUB API FUNCTIONS
@@ -31,19 +31,32 @@ def gh_api(endpoint, method='GET', data=None):
         'Authorization': f'token {TOKEN}',
         'Accept': 'application/vnd.github.v3+json'
     }
-    if method == 'GET':
-        r = requests.get(url, headers=headers)
-    else:
-        r = requests.put(url, headers=headers, json=data)
-    r.raise_for_status()
-    return r.json()
+    
+    try:
+        if method == 'GET':
+            r = requests.get(url, headers=headers)
+        else:
+            r = requests.put(url, headers=headers, json=data)
+        
+        if r.status_code == 404:
+            return None
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ GitHub API Error: {e}")
+        print(f"Status Code: {r.status_code if 'r' in locals() else 'Unknown'}")
+        print(f"Response: {r.text if 'r' in locals() else 'No response'}")
+        raise
 
 def get_gh_file(path):
     try:
         res = gh_api(f"contents/{path}")
+        if not res:
+            return None, None
         content = base64.b64decode(res['content']).decode('utf-8')
         return content, res['sha']
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Could not read {path}: {e}")
         return None, None
 
 def save_gh_file(path, content, msg, sha=None):
@@ -51,7 +64,9 @@ def save_gh_file(path, content, msg, sha=None):
     data = {'message': msg, 'content': encoded, 'branch': BRANCH}
     if sha:
         data['sha'] = sha
-    return gh_api(f"contents/{path}", 'PUT', data)
+    result = gh_api(f"contents/{path}", 'PUT', data)
+    print(f"✅ Saved {path}")
+    return result
 
 def delete_gh_file(path, sha, msg):
     url = f"https://api.github.com/repos/{REPO}/contents/{path}"
@@ -66,19 +81,16 @@ def delete_gh_file(path, sha, msg):
     }
     r = requests.delete(url, headers=headers, json=data)
     r.raise_for_status()
+    print(f"🗑️ Deleted {path}")
     return r.json()
 
 # ============================================
-# RSS UPDATE (يحتفظ فقط بآخر 3 عناصر)
+# RSS UPDATE
 # ============================================
 def update_rss(new_items):
-    """
-    new_items: قائمة من القواميس تحتوي على title, video_url, pub_date.
-    """
     old_content, _ = get_gh_file("rss.xml")
     items = []
 
-    # قراءة العناصر الحالية
     if old_content:
         try:
             root = ET.fromstring(old_content)
@@ -93,22 +105,20 @@ def update_rss(new_items):
                         'video_url': video_url,
                         'pub_date': item.find('pubDate').text if item.find('pubDate') is not None else ""
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"⚠️ Error parsing RSS: {e}")
 
-    # إضافة العناصر الجديدة
     items.extend(new_items)
 
-    # الاحتفاظ بآخر MAX_ITEMS عنصر فقط (الأحدث)
     if len(items) > MAX_ITEMS:
         items = items[-MAX_ITEMS:]
 
-    # بناء XML
     rss = ET.Element('rss', version='2.0')
     channel = ET.SubElement(rss, 'channel')
     ET.SubElement(channel, 'title').text = 'مقاطع الفيديو - Shorts'
     ET.SubElement(channel, 'link').text = f"https://github.com/{REPO}"
     ET.SubElement(channel, 'language').text = 'ar-sa'
+    ET.SubElement(channel, 'lastBuildDate').text = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
 
     for item in items:
         node = ET.SubElement(channel, 'item')
@@ -127,7 +137,7 @@ def update_rss(new_items):
     save_gh_file("rss.xml", clean_xml, f"إضافة {len(new_items)} مقاطع", sha)
 
 # ============================================
-# TRACKER (المقاطع التي تمت معالجتها)
+# TRACKER
 # ============================================
 def get_processed_videos():
     content, _ = get_gh_file("processed_videos.txt")
@@ -147,32 +157,38 @@ def update_processed_videos(new_files):
 # ============================================
 def get_local_videos():
     video_files = list(VIDEOS_DIR.glob("*.mp4"))
-    video_files.sort(key=lambda p: p.name)  # ترتيب تصاعدي حسب الاسم
+    video_files.sort(key=lambda p: p.name)
     return [f.name for f in video_files]
 
 async def main():
     if not TOKEN:
-        print("❌ خطأ: GITHUB_TOKEN غير موجود.")
+        print("❌ خطأ: GITHUB_TOKEN أو PAT_TOKEN غير موجود.")
+        print("تأكد من تعيين المتغير في GitHub Secrets")
         return
 
-    # 1. قائمة جميع المقاطع محلياً
+    print(f"🚀 Starting video processing...")
+    print(f"Repository: {REPO}")
+    print(f"Branch: {BRANCH}")
+    
     all_videos = get_local_videos()
     if not all_videos:
         print("⚠️ لا توجد مقاطع فيديو في مجلد Videos.")
         return
 
-    # 2. المقاطع التي تمت معالجتها سابقاً
+    print(f"📹 Found {len(all_videos)} videos: {', '.join(all_videos)}")
+    
     processed = get_processed_videos()
+    print(f"📝 Previously processed: {len(processed)} videos")
+    
     pending = [v for v in all_videos if v not in processed]
+    
     if not pending:
         print("✅ جميع المقاطع تمت معالجتها مسبقاً.")
         return
 
-    # 3. اختيار أول 3 مقاطع فقط
     today_videos = pending[:VIDEOS_PER_DAY]
-    print(f"📌 سيتم معالجة {len(today_videos)} مقطع اليوم.")
+    print(f"📌 سيتم معالجة {len(today_videos)} مقطع اليوم: {', '.join(today_videos)}")
 
-    # 4. إعداد عناصر RSS
     new_rss_items = []
     for filename in today_videos:
         title = Path(filename).stem
@@ -184,31 +200,29 @@ async def main():
             'pub_date': pub_date
         })
 
-    # 5. تحديث RSS
+    print("📡 Updating RSS...")
     update_rss(new_rss_items)
 
-    # 6. حذف الملفات من GitHub ومحلياً
+    print("🗑️ Deleting processed videos...")
     for filename in today_videos:
         try:
             _, sha = get_gh_file(f"Videos/{filename}")
             if sha:
                 delete_gh_file(f"Videos/{filename}", sha, f"حذف {filename} بعد الإضافة")
-                print(f"🗑️ تم حذف {filename} من GitHub.")
             else:
                 print(f"⚠️ لم يتم العثور على {filename} على GitHub.")
         except Exception as e:
             print(f"❌ فشل حذف {filename} من GitHub: {e}")
 
-        # حذف محلي
         local_path = VIDEOS_DIR / filename
         if local_path.exists():
             local_path.unlink()
             print(f"🗑️ تم حذف {filename} من المجلد المحلي.")
 
-    # 7. تحديث tracker
     update_processed_videos(today_videos)
 
-    print(f"✅ تمت معالجة {len(today_videos)} مقاطع. المتبقي: {len(pending) - len(today_videos)}")
+    remaining = len(pending) - len(today_videos)
+    print(f"✅ تمت معالجة {len(today_videos)} مقاطع. المتبقي: {remaining}")
 
 if __name__ == "__main__":
     asyncio.run(main())
