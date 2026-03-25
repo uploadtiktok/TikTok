@@ -26,7 +26,14 @@ def extract_number(filename):
     match = re.search(r'(\d+)', filename)
     if match:
         return int(match.group(1))
-    return float('inf')  # الملفات بدون أرقام تذهب للنهاية
+    return float('inf')
+
+def get_numeric_value(filename):
+    """استخراج القيمة الرقمية للمقارنة"""
+    try:
+        return int(filename.split('.')[0])
+    except:
+        return extract_number(filename)
 
 # ============================================
 # GITHUB API FUNCTIONS
@@ -183,13 +190,6 @@ def extract_filename_from_url(url):
     """استخراج اسم الملف من رابط GitHub الخام"""
     return url.split('/')[-1]
 
-def get_numeric_value(filename):
-    """استخراج القيمة الرقمية للمقارنة"""
-    try:
-        return int(filename.split('.')[0])
-    except:
-        return float('inf')
-
 async def main():
     if not TOKEN:
         print("❌ خطأ: TOKEN غير موجود.")
@@ -211,6 +211,7 @@ async def main():
     print(f"📡 Current RSS contains: {current_filenames_in_rss}")
 
     # 3. حذف المقاطع القديمة (التي هي أقدم من أقدم مقطع في RSS)
+    deleted_files = []
     if current_filenames_in_rss:
         # ترتيب المقاطع في RSS حسب الرقم
         rss_files_sorted = sorted(list(current_filenames_in_rss), key=get_numeric_value)
@@ -231,15 +232,21 @@ async def main():
                 print(f"🗑️ سيتم حذف {len(to_delete)} مقطع قديم (أقدم من {oldest_in_rss}): {', '.join(to_delete)}")
                 for filename in to_delete:
                     try:
-                        _, sha = get_gh_file(f"Videos/{filename}")
-                        if sha:
-                            delete_gh_file(f"Videos/{filename}", sha, f"حذف قديم {filename}")
+                        # الحصول على sha للملف
+                        file_info = gh_api(f"contents/Videos/{filename}")
+                        if file_info and 'sha' in file_info:
+                            delete_gh_file(f"Videos/{filename}", file_info['sha'], f"حذف قديم {filename}")
                             print(f"🗑️ تم حذف {filename} من المستودع")
+                            deleted_files.append(filename)
+                        else:
+                            print(f"⚠️ لم يتم العثور على {filename} في المستودع")
                     except Exception as e:
                         print(f"❌ فشل حذف {filename}: {e}")
                 
                 # تحديث قائمة الفيديوهات بعد الحذف
-                all_videos = list_videos_in_repo()
+                if deleted_files:
+                    all_videos = list_videos_in_repo()
+                    print(f"📹 Updated video list: {len(all_videos)} videos remaining")
             else:
                 print("✅ لا توجد ملفات قديمة للحذف")
         else:
@@ -293,6 +300,7 @@ async def main():
     
     print(f"✅ تمت معالجة {len(today_videos)} مقاطع جديدة")
     print(f"📝 Tracker now contains: {updated_filenames}")
+    print(f"🗑️ Total deleted files in this run: {len(deleted_files)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
