@@ -4,7 +4,20 @@
     <title>مقاطع الفيديو - Shorts</title>
     <link>https://github.com/uploadtiktok/TikTok</link>
     <language>ar-sa</language>
-    <lastBuildDate>Wed, 25 Mar 2026 19:01:17 +0100</lastBuildDate>
-    <description>لا توجد مقاطع حالياً</description>
+    <lastBuildDate>Wed, 25 Mar 2026 19:03:18 +0100</lastBuildDate>
+    <item>
+      <title>ما حكم الحصول على الجنسية الأوروبية</title>
+      <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/11_ما_حكم_الحصول_على_الجنسية_الأوروبية_merged_cleaned.mp4</link>
+      <pubDate>Wed, 25 Mar 2026 19:03:18 +0100</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/11_ما_حكم_الحصول_على_الجنسية_الأوروبية_merged_cleaned.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/11_ما_حكم_الحصول_على_الجنسية_الأوروبية_merged_cleaned.mp4</guid>
+    </item>
+    <item>
+      <title>هل يجوز قراءة كتب التفسير بدون وضوء</title>
+      <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/34_هل_يجوز_قراءة_كتب_التفسير_بدون_وضوء_merged_cleaned.mp4</link>
+      <pubDate>Wed, 25 Mar 2026 19:03:18 +0100</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/34_هل_يجوز_قراءة_كتب_التفسير_بدون_وضوء_merged_cleaned.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/34_هل_يجوز_قراءة_كتب_التفسير_بدون_وضوء_merged_cleaned.mp4</guid>
+    </item>
   </channel>
 </rss>
