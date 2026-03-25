@@ -37,17 +37,29 @@ def clean_title(filename):
     # إزالة الامتداد .mp4
     title = filename.replace('.mp4', '')
     
-    # إزالة الكلمات المكررة مثل _merged_cleaned
-    title = re.sub(r'_(?:merged|cleaned|final|edit|v\d+)+$', '', title)
-    title = re.sub(r'_(?:merged|cleaned|final|edit|v\d+)+_', '_', title)
+    # إزالة _merged_cleaned بالكامل (بأي شكل من الأشكال)
+    title = re.sub(r'_merged_cleaned$', '', title)
+    title = re.sub(r'_merged_cleaned_', '_', title)
+    title = re.sub(r'_merged$', '', title)
+    title = re.sub(r'_cleaned$', '', title)
+    
+    # إزالة أي كلمات مكررة مثل _merged أو _cleaned في أي مكان
+    title = re.sub(r'_(?:merged|cleaned|final|edit|v\d+)+', '', title)
     
     # إزالة الأرقام في البداية (مثل 72_)
     title = re.sub(r'^\d+_', '', title)
     
-    # استبدال الشرطات السفلية بمسافات
+    # استبدال الشرطات السفلية المتبقية بمسافات
     title = title.replace('_', ' ')
     
     # إزالة المسافات الزائدة
+    title = re.sub(r'\s+', ' ', title).strip()
+    
+    # إزالة أي كلمة "merged" أو "cleaned" متبقية
+    title = re.sub(r'\bmerged\b', '', title, flags=re.IGNORECASE)
+    title = re.sub(r'\bcleaned\b', '', title, flags=re.IGNORECASE)
+    
+    # إزالة المسافات الزائدة مرة أخرى بعد الحذف
     title = re.sub(r'\s+', ' ', title).strip()
     
     # جعل أول حرف كبير
@@ -212,8 +224,10 @@ def create_new_rss(videos_to_add):
     print(f"✅ RSS created/updated with {len(videos_to_add)} items")
     
     # عرض العناوين النظيفة للتوضيح
+    print("   تنظيف العناوين:")
     for item in items:
-        print(f"   📝 {item['original_filename']} → {item['title']}")
+        print(f"      📝 {item['original_filename']}")
+        print(f"         → {item['title']}")
 
 # ============================================
 # MAIN
@@ -233,7 +247,7 @@ async def main():
         # إذا كان المجلد فارغاً، قم بإفراغ RSS
         create_empty_rss()
         return
-    print(f"📹 Found {len(all_videos)} videos in repo: {', '.join(all_videos[:5])}...")
+    print(f"📹 Found {len(all_videos)} videos in repo")
 
     # 2. قراءة RSS الحالي
     current_rss_filenames = get_current_rss_filenames()
@@ -268,9 +282,7 @@ async def main():
     added_count = 0
     if all_videos:
         videos_to_add = all_videos[:VIDEOS_PER_DAY]
-        print(f"\n📌 سيتم إضافة {len(videos_to_add)} مقاطع جديدة إلى RSS:")
-        for v in videos_to_add:
-            print(f"   - {v} → {clean_title(v)}")
+        print(f"\n📌 سيتم إضافة {len(videos_to_add)} مقاطع جديدة إلى RSS")
         create_new_rss(videos_to_add)
         added_count = len(videos_to_add)
     else:
