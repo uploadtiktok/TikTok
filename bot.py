@@ -28,13 +28,6 @@ def extract_number(filename):
         return int(match.group(1))
     return float('inf')
 
-def get_numeric_value(filename):
-    """استخراج القيمة الرقمية للمقارنة"""
-    try:
-        return int(filename.split('.')[0])
-    except:
-        return extract_number(filename)
-
 # ============================================
 # GITHUB API FUNCTIONS
 # ============================================
@@ -130,6 +123,26 @@ def get_current_rss_filenames():
     
     return filenames
 
+def create_empty_rss():
+    """إنشاء ملف RSS فارغ (بدون عناصر)"""
+    # بناء XML فارغ
+    rss = ET.Element('rss', version='2.0')
+    channel = ET.SubElement(rss, 'channel')
+    ET.SubElement(channel, 'title').text = 'مقاطع الفيديو - Shorts'
+    ET.SubElement(channel, 'link').text = f"https://github.com/{REPO}"
+    ET.SubElement(channel, 'language').text = 'ar-sa'
+    ET.SubElement(channel, 'lastBuildDate').text = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
+    ET.SubElement(channel, 'description').text = 'لا توجد مقاطع حالياً'
+
+    xml_str = ET.tostring(rss, encoding='utf-8')
+    dom = minidom.parseString(xml_str)
+    pretty_xml = dom.toprettyxml(indent="  ")
+    clean_xml = "\n".join(line for line in pretty_xml.split('\n') if line.strip())
+
+    _, sha = get_gh_file("rss.xml")
+    save_gh_file("rss.xml", clean_xml, "إفراغ RSS (لا توجد مقاطع)", sha)
+    print("✅ RSS emptied (no videos available)")
+
 def create_new_rss(videos_to_add):
     """إنشاء ملف RSS جديد يحتوي على المقاطع المحددة"""
     items = []
@@ -183,6 +196,8 @@ async def main():
     all_videos = list_videos_in_repo()
     if not all_videos:
         print("⚠️ لا توجد مقاطع فيديو في مجلد Videos.")
+        # إذا كان المجلد فارغاً، قم بإفراغ RSS
+        create_empty_rss()
         return
     print(f"📹 Found {len(all_videos)} videos in repo: {', '.join(all_videos[:10])}...")
 
@@ -191,19 +206,21 @@ async def main():
     print(f"📡 Current RSS contains: {current_rss_filenames}")
 
     # 3. حذف المقاطع الموجودة في RSS من مجلد Videos
+    deleted_count = 0
     if current_rss_filenames:
         to_delete = [f for f in current_rss_filenames if f in all_videos]
         
         if to_delete:
-            print(f"🗑️ سيتم حذف {len(to_delete)} مقطع من مجلد Videos (الموجودة في RSS): {', '.join(to_delete)}")
+            print(f"🗑️ سيتم حذف {len(to_delete)} مقطع من مجلد Videos (الموجودة في RSS):")
             for filename in to_delete:
                 try:
                     file_info = gh_api(f"contents/Videos/{filename}")
                     if file_info and 'sha' in file_info:
                         delete_gh_file(f"Videos/{filename}", file_info['sha'], f"حذف {filename} (خرج من RSS)")
-                        print(f"🗑️ تم حذف {filename} من المستودع")
+                        print(f"   🗑️ تم حذف {filename}")
+                        deleted_count += 1
                 except Exception as e:
-                    print(f"❌ فشل حذف {filename}: {e}")
+                    print(f"   ❌ فشل حذف {filename}: {e}")
             
             # تحديث قائمة الفيديوهات بعد الحذف
             all_videos = list_videos_in_repo()
@@ -214,25 +231,29 @@ async def main():
         print("📡 RSS غير موجود أو فارغ")
 
     # 4. إضافة مقاطع جديدة إلى RSS (أول 3 مقاطع متبقية)
+    added_count = 0
     if all_videos:
         videos_to_add = all_videos[:VIDEOS_PER_DAY]
         print(f"📌 سيتم إضافة {len(videos_to_add)} مقاطع جديدة إلى RSS: {', '.join(videos_to_add)}")
         create_new_rss(videos_to_add)
-        print(f"✅ تمت إضافة {len(videos_to_add)} مقاطع إلى RSS")
+        added_count = len(videos_to_add)
+        print(f"✅ تمت إضافة {added_count} مقاطع إلى RSS")
     else:
-        print("✅ لا توجد مقاطع متبقية للإضافة")
+        # إذا لم يتبق أي مقاطع، قم بإفراغ RSS
+        print("📡 لا توجد مقاطع متبقية، سيتم إفراغ RSS")
+        create_empty_rss()
 
     # 5. إحصائيات نهائية
     remaining_videos = list_videos_in_repo()
     print(f"\n📊 ملخص:")
-    print(f"   - مقاطع تم حذفها من المجلد: {len(current_rss_filenames) if current_rss_filenames else 0}")
-    print(f"   - مقاطع تمت إضافتها إلى RSS: {len(videos_to_add) if all_videos else 0}")
+    print(f"   - مقاطع تم حذفها من المجلد: {deleted_count}")
+    print(f"   - مقاطع تمت إضافتها إلى RSS: {added_count}")
     print(f"   - المقاطع المتبقية في مجلد Videos: {len(remaining_videos)}")
 
     if remaining_videos:
         print(f"   - المقاطع المتبقية: {', '.join(remaining_videos[:10])}")
     else:
-        print("   🎉 جميع المقاطع تمت معالجتها!")
+        print("   🎉 جميع المقاطع تمت معالجتها! RSS فارغ.")
 
 if __name__ == "__main__":
     asyncio.run(main())
