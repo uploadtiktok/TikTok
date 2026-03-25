@@ -6,6 +6,7 @@ from xml.dom import minidom
 from xml.etree import ElementTree as ET
 from datetime import datetime
 import pytz
+import re
 
 # ============================================
 # CONFIGURATION
@@ -16,6 +17,16 @@ BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
 MAX_ITEMS = 3
 VIDEOS_PER_DAY = 3
+
+# ============================================
+# HELPER FUNCTIONS
+# ============================================
+def extract_number(filename):
+    """استخراج الرقم من اسم الملف إذا كان موجوداً"""
+    match = re.search(r'(\d+)', filename)
+    if match:
+        return int(match.group(1))
+    return float('inf')  # الملفات بدون أرقام تذهب للنهاية
 
 # ============================================
 # GITHUB API FUNCTIONS
@@ -74,8 +85,14 @@ def list_videos_in_repo():
             return []
         # تصفية ملفات mp4 فقط
         videos = [item['name'] for item in res if item['name'].endswith('.mp4')]
-        # تحويل الأسماء إلى أرقام للترتيب الصحيح
-        videos.sort(key=lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else x)
+        
+        # ترتيب آمن: استخراج الأرقام من الأسماء
+        try:
+            videos.sort(key=lambda x: (extract_number(x), x))
+        except Exception as e:
+            print(f"⚠️ Sorting error: {e}, using simple sort")
+            videos.sort()
+        
         return videos
     except Exception as e:
         print(f"❌ Failed to list videos: {e}")
@@ -166,6 +183,13 @@ def extract_filename_from_url(url):
     """استخراج اسم الملف من رابط GitHub الخام"""
     return url.split('/')[-1]
 
+def get_numeric_value(filename):
+    """استخراج القيمة الرقمية للمقارنة"""
+    try:
+        return int(filename.split('.')[0])
+    except:
+        return float('inf')
+
 async def main():
     if not TOKEN:
         print("❌ خطأ: TOKEN غير موجود.")
@@ -174,65 +198,52 @@ async def main():
     print("🚀 Starting video processing...")
     print(f"Repository: {REPO}, Branch: {BRANCH}")
 
-    # 1. جلب قائمة الفيديوهات من المستودع عبر API (مرتبة تصاعدياً)
+    # 1. جلب قائمة الفيديوهات من المستودع عبر API
     all_videos = list_videos_in_repo()
     if not all_videos:
         print("⚠️ لا توجد مقاطع فيديو في مجلد Videos.")
         return
-    print(f"📹 Found {len(all_videos)} videos in repo (oldest first): {', '.join(all_videos[:5])}...")
+    print(f"📹 Found {len(all_videos)} videos in repo: {', '.join(all_videos[:10])}...")
 
     # 2. قراءة RSS الحالي
     current_rss_items = get_current_rss_items()
     current_filenames_in_rss = {extract_filename_from_url(item['video_url']) for item in current_rss_items}
     print(f"📡 Current RSS contains: {current_filenames_in_rss}")
 
-    # 3. تحديد المقاطع التي يجب حذفها (الموجودة في المستودع ولكنها ليست في RSS)
-    # ولكن فقط تلك التي هي أقدم من أحدث 3 مقاطع في RSS
+    # 3. حذف المقاطع القديمة (التي هي أقدم من أقدم مقطع في RSS)
     if current_filenames_in_rss:
-        # نأخذ أقدم المقاطع من all_videos التي ليست في RSS
-        old_files_to_delete = []
-        for video in all_videos:
-            if video not in current_filenames_in_rss:
-                # هذا المقطع ليس في RSS، إذن يجب حذفه
-                old_files_to_delete.append(video)
-            else:
-                # بمجرد أن نصل لأول مقطع موجود في RSS، نتوقف
-                # لأن المقاطع الأحدث في RSS هي آخر 3
-                # والمقاطع الأقدم يجب حذفها
-                pass
+        # ترتيب المقاطع في RSS حسب الرقم
+        rss_files_sorted = sorted(list(current_filenames_in_rss), key=get_numeric_value)
+        oldest_in_rss = rss_files_sorted[0] if rss_files_sorted else None
         
-        # لكننا نريد فقط حذف المقاطع التي هي أقدم من أقدم مقطع في RSS
-        if current_filenames_in_rss:
-            # نأتي بأقدم مقطع في RSS
-            rss_files_sorted = sorted(list(current_filenames_in_rss), key=lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else x)
-            oldest_in_rss = rss_files_sorted[0] if rss_files_sorted else None
-            
-            if oldest_in_rss:
-                # نحذف فقط المقاطع الأصغر من أقدم مقطع في RSS
-                to_delete = []
-                for video in all_videos:
-                    if video < oldest_in_rss:  # مقارنة بالاسم
-                        to_delete.append(video)
-                    else:
-                        break
-                
-                if to_delete:
-                    print(f"🗑️ سيتم حذف {len(to_delete)} مقطع قديم (أقدم من {oldest_in_rss}): {', '.join(to_delete)}")
-                    for filename in to_delete:
-                        try:
-                            _, sha = get_gh_file(f"Videos/{filename}")
-                            if sha:
-                                delete_gh_file(f"Videos/{filename}", sha, f"حذف قديم {filename}")
-                                print(f"🗑️ تم حذف {filename} من المستودع")
-                        except Exception as e:
-                            print(f"❌ فشل حذف {filename}: {e}")
-                    
-                    # تحديث قائمة الفيديوهات بعد الحذف
-                    all_videos = list_videos_in_repo()
+        if oldest_in_rss:
+            oldest_num = get_numeric_value(oldest_in_rss)
+            # نحذف فقط المقاطع الأصغر من أقدم مقطع في RSS
+            to_delete = []
+            for video in all_videos:
+                video_num = get_numeric_value(video)
+                if video_num < oldest_num:
+                    to_delete.append(video)
                 else:
-                    print("✅ لا توجد ملفات قديمة للحذف")
+                    break
+            
+            if to_delete:
+                print(f"🗑️ سيتم حذف {len(to_delete)} مقطع قديم (أقدم من {oldest_in_rss}): {', '.join(to_delete)}")
+                for filename in to_delete:
+                    try:
+                        _, sha = get_gh_file(f"Videos/{filename}")
+                        if sha:
+                            delete_gh_file(f"Videos/{filename}", sha, f"حذف قديم {filename}")
+                            print(f"🗑️ تم حذف {filename} من المستودع")
+                    except Exception as e:
+                        print(f"❌ فشل حذف {filename}: {e}")
+                
+                # تحديث قائمة الفيديوهات بعد الحذف
+                all_videos = list_videos_in_repo()
             else:
                 print("✅ لا توجد ملفات قديمة للحذف")
+        else:
+            print("✅ لا توجد ملفات قديمة للحذف")
     else:
         print("📡 RSS فارغ، لا يوجد ملفات قديمة للحذف")
 
