@@ -28,6 +28,34 @@ def extract_number(filename):
         return int(match.group(1))
     return float('inf')
 
+def clean_title(filename):
+    """
+    تنظيف عنوان المقطع من الأرقام والعلامات غير المرغوب فيها
+    مثال: 72_ما_حكم_من_ينكر_خلافة_علي_بن_أبي_طالب_merged_cleaned.mp4
+    يصبح: ما حكم من ينكر خلافة علي بن أبي طالب
+    """
+    # إزالة الامتداد .mp4
+    title = filename.replace('.mp4', '')
+    
+    # إزالة الكلمات المكررة مثل _merged_cleaned
+    title = re.sub(r'_(?:merged|cleaned|final|edit|v\d+)+$', '', title)
+    title = re.sub(r'_(?:merged|cleaned|final|edit|v\d+)+_', '_', title)
+    
+    # إزالة الأرقام في البداية (مثل 72_)
+    title = re.sub(r'^\d+_', '', title)
+    
+    # استبدال الشرطات السفلية بمسافات
+    title = title.replace('_', ' ')
+    
+    # إزالة المسافات الزائدة
+    title = re.sub(r'\s+', ' ', title).strip()
+    
+    # جعل أول حرف كبير
+    if title:
+        title = title[0].upper() + title[1:] if len(title) > 1 else title.upper()
+    
+    return title if title else filename
+
 # ============================================
 # GITHUB API FUNCTIONS
 # ============================================
@@ -144,16 +172,18 @@ def create_empty_rss():
     print("✅ RSS emptied (no videos available)")
 
 def create_new_rss(videos_to_add):
-    """إنشاء ملف RSS جديد يحتوي على المقاطع المحددة"""
+    """إنشاء ملف RSS جديد يحتوي على المقاطع المحددة مع عناوين نظيفة"""
     items = []
     for filename in videos_to_add:
-        title = filename.split('.')[0]
+        # تنظيف العنوان
+        clean_title_text = clean_title(filename)
         raw_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{filename}"
         pub_date = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
         items.append({
-            'title': title,
+            'title': clean_title_text,
             'video_url': raw_url,
-            'pub_date': pub_date
+            'pub_date': pub_date,
+            'original_filename': filename
         })
 
     # بناء XML
@@ -180,6 +210,10 @@ def create_new_rss(videos_to_add):
     _, sha = get_gh_file("rss.xml")
     save_gh_file("rss.xml", clean_xml, f"تحديث RSS - {len(videos_to_add)} مقاطع", sha)
     print(f"✅ RSS created/updated with {len(videos_to_add)} items")
+    
+    # عرض العناوين النظيفة للتوضيح
+    for item in items:
+        print(f"   📝 {item['original_filename']} → {item['title']}")
 
 # ============================================
 # MAIN
@@ -199,11 +233,11 @@ async def main():
         # إذا كان المجلد فارغاً، قم بإفراغ RSS
         create_empty_rss()
         return
-    print(f"📹 Found {len(all_videos)} videos in repo: {', '.join(all_videos[:10])}...")
+    print(f"📹 Found {len(all_videos)} videos in repo: {', '.join(all_videos[:5])}...")
 
     # 2. قراءة RSS الحالي
     current_rss_filenames = get_current_rss_filenames()
-    print(f"📡 Current RSS contains: {current_rss_filenames}")
+    print(f"📡 Current RSS contains: {len(current_rss_filenames)} items")
 
     # 3. حذف المقاطع الموجودة في RSS من مجلد Videos
     deleted_count = 0
@@ -234,13 +268,14 @@ async def main():
     added_count = 0
     if all_videos:
         videos_to_add = all_videos[:VIDEOS_PER_DAY]
-        print(f"📌 سيتم إضافة {len(videos_to_add)} مقاطع جديدة إلى RSS: {', '.join(videos_to_add)}")
+        print(f"\n📌 سيتم إضافة {len(videos_to_add)} مقاطع جديدة إلى RSS:")
+        for v in videos_to_add:
+            print(f"   - {v} → {clean_title(v)}")
         create_new_rss(videos_to_add)
         added_count = len(videos_to_add)
-        print(f"✅ تمت إضافة {added_count} مقاطع إلى RSS")
     else:
         # إذا لم يتبق أي مقاطع، قم بإفراغ RSS
-        print("📡 لا توجد مقاطع متبقية، سيتم إفراغ RSS")
+        print("\n📡 لا توجد مقاطع متبقية، سيتم إفراغ RSS")
         create_empty_rss()
 
     # 5. إحصائيات نهائية
@@ -251,7 +286,7 @@ async def main():
     print(f"   - المقاطع المتبقية في مجلد Videos: {len(remaining_videos)}")
 
     if remaining_videos:
-        print(f"   - المقاطع المتبقية: {', '.join(remaining_videos[:10])}")
+        print(f"   - المقاطع المتبقية: {', '.join(remaining_videos[:5])}...")
     else:
         print("   🎉 جميع المقاطع تمت معالجتها! RSS فارغ.")
 
