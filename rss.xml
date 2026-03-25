@@ -1,0 +1,30 @@
+<?xml version="1.0" ?>
+<rss version="2.0">
+  <channel>
+    <title>مقاطع الفيديو - Shorts</title>
+    <link>https://github.com/uploadtiktok/TikTok</link>
+    <language>ar-sa</language>
+    <lastBuildDate>Wed, 25 Mar 2026 16:24:17 +0100</lastBuildDate>
+    <item>
+      <title>12</title>
+      <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/12.mp4</link>
+      <pubDate>Wed, 25 Mar 2026 16:24:17 +0100</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/12.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/12.mp4</guid>
+    </item>
+    <item>
+      <title>13</title>
+      <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/13.mp4</link>
+      <pubDate>Wed, 25 Mar 2026 16:24:17 +0100</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/13.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/13.mp4</guid>
+    </item>
+    <item>
+      <title>14</title>
+      <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/14.mp4</link>
+      <pubDate>Wed, 25 Mar 2026 16:24:17 +0100</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/14.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/14.mp4</guid>
+    </item>
+  </channel>
+</rss>
