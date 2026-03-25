@@ -80,12 +80,12 @@ def delete_gh_file(path, sha, msg):
 # ============================================
 # RSS FUNCTIONS
 # ============================================
-def get_current_rss_items():
-    """استخراج عناصر RSS الحالية (video_url لكل عنصر)"""
+def get_current_rss_urls():
+    """استخراج روابط الفيديو من RSS الحالي"""
     content, _ = get_gh_file("rss.xml")
     if not content:
         return []
-    items = []
+    urls = []
     try:
         root = ET.fromstring(content)
         for item in root.findall('.//item'):
@@ -94,13 +94,13 @@ def get_current_rss_items():
             enc_url = enc_node.get('url') if enc_node is not None else ""
             video_url = link if link else enc_url
             if video_url:
-                items.append(video_url)
+                urls.append(video_url)
     except Exception as e:
         print(f"⚠️ Error parsing RSS: {e}")
-    return items
+    return urls
 
 def update_rss(new_items):
-    """إضافة عناصر جديدة إلى RSS والاحتفاظ بآخر MAX_ITEMS عنصر"""
+    """إضافة عناصر جديدة إلى RSS والاحتفاظ بآخر 3 عناصر"""
     old_content, _ = get_gh_file("rss.xml")
     items = []
 
@@ -123,6 +123,7 @@ def update_rss(new_items):
 
     items.extend(new_items)
 
+    # الاحتفاظ بآخر 3 عناصر فقط
     if len(items) > MAX_ITEMS:
         items = items[-MAX_ITEMS:]
 
@@ -152,20 +153,39 @@ def update_rss(new_items):
     print(f"✅ RSS updated with {len(new_items)} items")
 
 # ============================================
-# TRACKER
+# TRACKER - يحتوي فقط على آخر 3 مقاطع
 # ============================================
 def get_processed_videos():
+    """قراءة آخر 3 مقاطع تمت معالجتها"""
     content, _ = get_gh_file("processed_videos.txt")
     if content:
-        return set(line.strip() for line in content.splitlines() if line.strip())
-    return set()
+        return [line.strip() for line in content.splitlines() if line.strip()]
+    return []
 
 def update_processed_videos(new_files):
+    """تحديث tracker ليحتوي فقط على آخر 3 مقاطع"""
     existing = get_processed_videos()
-    existing.update(new_files)
-    new_content = "\n".join(sorted(existing)) + ("\n" if existing else "")
+    
+    # إضافة الملفات الجديدة
+    all_files = existing + new_files
+    
+    # الاحتفاظ بآخر 3 فقط (الأحدث)
+    if len(all_files) > MAX_ITEMS:
+        all_files = all_files[-MAX_ITEMS:]
+    
+    new_content = "\n".join(all_files) + ("\n" if all_files else "")
     _, sha = get_gh_file("processed_videos.txt")
     save_gh_file("processed_videos.txt", new_content, "تحديث قائمة المقاطع المعالجة", sha)
+    print(f"📝 Tracker updated with {len(all_files)} files: {', '.join(all_files)}")
+
+def remove_from_processed_videos(files_to_remove):
+    """إزالة ملفات معينة من tracker"""
+    existing = get_processed_videos()
+    remaining = [f for f in existing if f not in files_to_remove]
+    new_content = "\n".join(remaining) + ("\n" if remaining else "")
+    _, sha = get_gh_file("processed_videos.txt")
+    save_gh_file("processed_videos.txt", new_content, "إزالة المقاطع القديمة من tracker", sha)
+    print(f"📝 Removed from tracker: {', '.join(files_to_remove)}")
 
 # ============================================
 # MAIN
@@ -177,7 +197,6 @@ def get_local_videos():
 
 def extract_filename_from_url(url):
     """استخراج اسم الملف من رابط GitHub الخام"""
-    # الرابط: https://raw.githubusercontent.com/.../Videos/12.mp4
     return url.split('/')[-1]
 
 async def main():
@@ -195,18 +214,18 @@ async def main():
         return
     print(f"📹 Found {len(all_videos)} videos locally.")
 
-    # 2. المقاطع التي تمت معالجتها سابقاً
+    # 2. المقاطع التي تمت معالجتها (آخر 3)
     processed = get_processed_videos()
-    print(f"📝 Previously processed: {len(processed)} videos")
+    print(f"📝 Currently tracked (last {MAX_ITEMS}): {processed}")
 
-    # 3. المقاطع الجديدة (غير المعالجة)
+    # 3. تحديد المقاطع الجديدة (غير الموجودة في tracker)
     pending = [v for v in all_videos if v not in processed]
+    
     if not pending:
-        print("✅ جميع المقاطع تمت معالجتها مسبقاً.")
-        # حتى لو لم تكن هناك مقاطع جديدة، قد نحتاج لحذف القديمة
+        print("✅ لا توجد مقاطع جديدة للمعالجة.")
     else:
         today_videos = pending[:VIDEOS_PER_DAY]
-        print(f"📌 سيتم معالجة {len(today_videos)} مقطع اليوم: {', '.join(today_videos)}")
+        print(f"📌 سيتم معالجة {len(today_videos)} مقطع جديد: {', '.join(today_videos)}")
 
         # إعداد عناصر RSS الجديدة
         new_rss_items = []
@@ -224,18 +243,17 @@ async def main():
         print("📡 Updating RSS...")
         update_rss(new_rss_items)
 
-        # تحديث قائمة المعالجة
+        # تحديث tracker (يضيف الجديد ويحتفظ بآخر 3 فقط)
         update_processed_videos(today_videos)
-        print(f"✅ Added {len(today_videos)} videos to RSS and tracker.")
 
-    # 4. بعد تحديث RSS، قم بحذف الملفات التي لم تعد موجودة في RSS (القديمة)
-    current_rss_urls = get_current_rss_items()
+    # 4. بعد تحديث RSS، تحديد وحذف الملفات التي خرجت من RSS
+    current_rss_urls = get_current_rss_urls()
     current_filenames_in_rss = {extract_filename_from_url(url) for url in current_rss_urls}
     print(f"📡 Current RSS contains: {current_filenames_in_rss}")
 
-    # الملفات التي يجب حذفها = الملفات الموجودة محلياً والتي تمت معالجتها سابقاً
-    # وليست موجودة في RSS الجديد
-    processed_set = get_processed_videos()
+    # الملفات التي يجب حذفها = الملفات الموجودة محلياً والموجودة في tracker
+    # ولكنها ليست في RSS الجديد
+    processed_set = set(get_processed_videos())
     to_delete = [f for f in all_videos if f in processed_set and f not in current_filenames_in_rss]
 
     if to_delete:
@@ -253,11 +271,16 @@ async def main():
                 print(f"🗑️ تم حذف {filename}")
             except Exception as e:
                 print(f"❌ فشل حذف {filename}: {e}")
+        
+        # إزالة الملفات المحذوفة من tracker
+        remove_from_processed_videos(to_delete)
     else:
         print("✅ لا توجد ملفات قديمة للحذف.")
 
-    remaining = len([v for v in all_videos if v not in processed_set])
+    # إحصائيات نهائية
+    remaining = len([v for v in all_videos if v not in set(get_processed_videos())])
     print(f"📊 المتبقي من المقاطع غير المعالجة: {remaining}")
+    print(f"📝 Tracker now contains: {get_processed_videos()}")
 
 if __name__ == "__main__":
     asyncio.run(main())
