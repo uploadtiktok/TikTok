@@ -108,12 +108,13 @@ def list_videos_in_repo():
 # ============================================
 # RSS FUNCTIONS
 # ============================================
-def get_current_rss_items():
-    """استخراج عناصر RSS الحالية (القائمة كاملة)"""
+def get_current_rss_filenames():
+    """استخراج أسماء الملفات من RSS الحالي"""
     content, _ = get_gh_file("rss.xml")
     if not content:
         return []
-    items = []
+    
+    filenames = []
     try:
         root = ET.fromstring(content)
         for item in root.findall('.//item'):
@@ -122,23 +123,25 @@ def get_current_rss_items():
             enc_url = enc_node.get('url') if enc_node is not None else ""
             video_url = link if link else enc_url
             if video_url:
-                items.append({
-                    'title': item.find('title').text,
-                    'video_url': video_url,
-                    'pub_date': item.find('pubDate').text if item.find('pubDate') is not None else ""
-                })
+                filename = video_url.split('/')[-1]
+                filenames.append(filename)
     except Exception as e:
         print(f"⚠️ Error parsing RSS: {e}")
-    return items
+    
+    return filenames
 
-def update_rss(new_items):
-    """إضافة عناصر جديدة إلى RSS والاحتفاظ بآخر 3 عناصر"""
-    items = get_current_rss_items()
-    items.extend(new_items)
-
-    # الاحتفاظ بآخر 3 عناصر فقط
-    if len(items) > MAX_ITEMS:
-        items = items[-MAX_ITEMS:]
+def create_new_rss(videos_to_add):
+    """إنشاء ملف RSS جديد يحتوي على المقاطع المحددة"""
+    items = []
+    for filename in videos_to_add:
+        title = filename.split('.')[0]
+        raw_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{filename}"
+        pub_date = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
+        items.append({
+            'title': title,
+            'video_url': raw_url,
+            'pub_date': pub_date
+        })
 
     # بناء XML
     rss = ET.Element('rss', version='2.0')
@@ -162,34 +165,12 @@ def update_rss(new_items):
     clean_xml = "\n".join(line for line in pretty_xml.split('\n') if line.strip())
 
     _, sha = get_gh_file("rss.xml")
-    save_gh_file("rss.xml", clean_xml, f"إضافة {len(new_items)} مقاطع", sha)
-    print(f"✅ RSS updated with {len(new_items)} items")
-    return items
-
-# ============================================
-# TRACKER - يحتوي فقط على آخر 3 مقاطع
-# ============================================
-def get_processed_videos():
-    """قراءة آخر 3 مقاطع تمت معالجتها"""
-    content, _ = get_gh_file("processed_videos.txt")
-    if content:
-        return [line.strip() for line in content.splitlines() if line.strip()]
-    return []
-
-def save_processed_videos(files_list):
-    """حفظ قائمة الملفات مباشرة"""
-    new_content = "\n".join(files_list) + ("\n" if files_list else "")
-    _, sha = get_gh_file("processed_videos.txt")
-    save_gh_file("processed_videos.txt", new_content, "تحديث قائمة المقاطع المعالجة", sha)
-    print(f"📝 Tracker updated with {len(files_list)} files: {', '.join(files_list)}")
+    save_gh_file("rss.xml", clean_xml, f"تحديث RSS - {len(videos_to_add)} مقاطع", sha)
+    print(f"✅ RSS created/updated with {len(videos_to_add)} items")
 
 # ============================================
 # MAIN
 # ============================================
-def extract_filename_from_url(url):
-    """استخراج اسم الملف من رابط GitHub الخام"""
-    return url.split('/')[-1]
-
 async def main():
     if not TOKEN:
         print("❌ خطأ: TOKEN غير موجود.")
@@ -198,7 +179,7 @@ async def main():
     print("🚀 Starting video processing...")
     print(f"Repository: {REPO}, Branch: {BRANCH}")
 
-    # 1. جلب قائمة الفيديوهات من المستودع عبر API
+    # 1. جلب قائمة الفيديوهات من المستودع
     all_videos = list_videos_in_repo()
     if not all_videos:
         print("⚠️ لا توجد مقاطع فيديو في مجلد Videos.")
@@ -206,101 +187,52 @@ async def main():
     print(f"📹 Found {len(all_videos)} videos in repo: {', '.join(all_videos[:10])}...")
 
     # 2. قراءة RSS الحالي
-    current_rss_items = get_current_rss_items()
-    current_filenames_in_rss = {extract_filename_from_url(item['video_url']) for item in current_rss_items}
-    print(f"📡 Current RSS contains: {current_filenames_in_rss}")
+    current_rss_filenames = get_current_rss_filenames()
+    print(f"📡 Current RSS contains: {current_rss_filenames}")
 
-    # 3. حذف المقاطع القديمة (التي هي أقدم من أقدم مقطع في RSS)
-    deleted_files = []
-    if current_filenames_in_rss:
-        # ترتيب المقاطع في RSS حسب الرقم
-        rss_files_sorted = sorted(list(current_filenames_in_rss), key=get_numeric_value)
-        oldest_in_rss = rss_files_sorted[0] if rss_files_sorted else None
+    # 3. حذف المقاطع الموجودة في RSS من مجلد Videos
+    if current_rss_filenames:
+        to_delete = [f for f in current_rss_filenames if f in all_videos]
         
-        if oldest_in_rss:
-            oldest_num = get_numeric_value(oldest_in_rss)
-            # نحذف فقط المقاطع الأصغر من أقدم مقطع في RSS
-            to_delete = []
-            for video in all_videos:
-                video_num = get_numeric_value(video)
-                if video_num < oldest_num:
-                    to_delete.append(video)
-                else:
-                    break
+        if to_delete:
+            print(f"🗑️ سيتم حذف {len(to_delete)} مقطع من مجلد Videos (الموجودة في RSS): {', '.join(to_delete)}")
+            for filename in to_delete:
+                try:
+                    file_info = gh_api(f"contents/Videos/{filename}")
+                    if file_info and 'sha' in file_info:
+                        delete_gh_file(f"Videos/{filename}", file_info['sha'], f"حذف {filename} (خرج من RSS)")
+                        print(f"🗑️ تم حذف {filename} من المستودع")
+                except Exception as e:
+                    print(f"❌ فشل حذف {filename}: {e}")
             
-            if to_delete:
-                print(f"🗑️ سيتم حذف {len(to_delete)} مقطع قديم (أقدم من {oldest_in_rss}): {', '.join(to_delete)}")
-                for filename in to_delete:
-                    try:
-                        # الحصول على sha للملف
-                        file_info = gh_api(f"contents/Videos/{filename}")
-                        if file_info and 'sha' in file_info:
-                            delete_gh_file(f"Videos/{filename}", file_info['sha'], f"حذف قديم {filename}")
-                            print(f"🗑️ تم حذف {filename} من المستودع")
-                            deleted_files.append(filename)
-                        else:
-                            print(f"⚠️ لم يتم العثور على {filename} في المستودع")
-                    except Exception as e:
-                        print(f"❌ فشل حذف {filename}: {e}")
-                
-                # تحديث قائمة الفيديوهات بعد الحذف
-                if deleted_files:
-                    all_videos = list_videos_in_repo()
-                    print(f"📹 Updated video list: {len(all_videos)} videos remaining")
-            else:
-                print("✅ لا توجد ملفات قديمة للحذف")
+            # تحديث قائمة الفيديوهات بعد الحذف
+            all_videos = list_videos_in_repo()
+            print(f"📹 Updated: {len(all_videos)} videos remaining")
         else:
-            print("✅ لا توجد ملفات قديمة للحذف")
+            print("✅ لا توجد مقاطع في RSS للحذف")
     else:
-        print("📡 RSS فارغ، لا يوجد ملفات قديمة للحذف")
+        print("📡 RSS غير موجود أو فارغ")
 
-    # 4. معالجة المقاطع الجديدة (من الأقدم)
-    processed = get_processed_videos()
-    print(f"📝 Currently tracked: {processed}")
-    
-    # الملفات المتبقية بعد الحذف
-    pending = [v for v in all_videos if v not in processed]
-    
-    if not pending:
-        print("✅ لا توجد مقاطع جديدة للمعالجة")
-        # تحديث tracker ليطابق RSS
-        if current_filenames_in_rss:
-            new_tracker = list(current_filenames_in_rss)
-            save_processed_videos(new_tracker)
-        return
+    # 4. إضافة مقاطع جديدة إلى RSS (أول 3 مقاطع متبقية)
+    if all_videos:
+        videos_to_add = all_videos[:VIDEOS_PER_DAY]
+        print(f"📌 سيتم إضافة {len(videos_to_add)} مقاطع جديدة إلى RSS: {', '.join(videos_to_add)}")
+        create_new_rss(videos_to_add)
+        print(f"✅ تمت إضافة {len(videos_to_add)} مقاطع إلى RSS")
+    else:
+        print("✅ لا توجد مقاطع متبقية للإضافة")
 
-    # معالجة المقاطع الجديدة (أول 3 من القائمة المتبقية)
-    today_videos = pending[:VIDEOS_PER_DAY]
-    print(f"📌 سيتم معالجة {len(today_videos)} مقطع جديد (الأقدم): {', '.join(today_videos)}")
+    # 5. إحصائيات نهائية
+    remaining_videos = list_videos_in_repo()
+    print(f"\n📊 ملخص:")
+    print(f"   - مقاطع تم حذفها من المجلد: {len(current_rss_filenames) if current_rss_filenames else 0}")
+    print(f"   - مقاطع تمت إضافتها إلى RSS: {len(videos_to_add) if all_videos else 0}")
+    print(f"   - المقاطع المتبقية في مجلد Videos: {len(remaining_videos)}")
 
-    # إعداد عناصر RSS الجديدة
-    new_rss_items = []
-    for filename in today_videos:
-        title = filename.split('.')[0]  # اسم الملف بدون امتداد
-        raw_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{filename}"
-        pub_date = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
-        new_rss_items.append({
-            'title': title,
-            'video_url': raw_url,
-            'pub_date': pub_date
-        })
-
-    # تحديث RSS
-    print("📡 Updating RSS...")
-    updated_items = update_rss(new_rss_items)
-    
-    # استخراج أسماء الملفات من RSS الجديد
-    updated_filenames = []
-    for item in updated_items:
-        filename = extract_filename_from_url(item['video_url'])
-        updated_filenames.append(filename)
-    
-    # تحديث tracker ليطابق RSS الجديد (آخر 3 مقاطع)
-    save_processed_videos(updated_filenames)
-    
-    print(f"✅ تمت معالجة {len(today_videos)} مقاطع جديدة")
-    print(f"📝 Tracker now contains: {updated_filenames}")
-    print(f"🗑️ Total deleted files in this run: {len(deleted_files)}")
+    if remaining_videos:
+        print(f"   - المقاطع المتبقية: {', '.join(remaining_videos[:10])}")
+    else:
+        print("   🎉 جميع المقاطع تمت معالجتها!")
 
 if __name__ == "__main__":
     asyncio.run(main())
