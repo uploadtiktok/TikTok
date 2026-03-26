@@ -39,29 +39,6 @@ def extract_number(filename):
         return int(match.group(1))
     return float('inf')
 
-def clean_title(filename):
-    """تنظيف عنوان المقطع"""
-    title = filename.replace('.mp4', '')
-    pattern = r'^\d+_\d{8}_\d{6}_\d+_'
-    title = re.sub(pattern, '', title)
-    title = re.sub(r'^\d+_', '', title)
-    title = re.sub(r'_merged_cleaned$', '', title)
-    title = re.sub(r'_(?:merged|cleaned|final|edit|v\d+)+', '', title)
-    title = title.replace('_', ' ')
-    title = re.sub(r'\s+', ' ', title).strip()
-    title = re.sub(r'\bmerged\b', '', title, flags=re.IGNORECASE)
-    title = re.sub(r'\bcleaned\b', '', title, flags=re.IGNORECASE)
-    title = re.sub(r'\s+', ' ', title).strip()
-    
-    if title:
-        title = title[0].upper() + title[1:] if len(title) > 1 else title.upper()
-    
-    if not title:
-        title = filename.replace('.mp4', '').replace('_', ' ')
-        title = re.sub(r'\d+', '', title).strip()
-    
-    return title if title else filename
-
 def gh_api(endpoint, method='GET', data=None):
     url = f"https://api.github.com/repos/{REPO}/{endpoint}"
     headers = {'Authorization': f'token {TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
@@ -106,22 +83,11 @@ def get_videos_in_repo():
         if not res:
             return []
         videos = [item['name'] for item in res if item['name'].endswith('.mp4')]
-        # ترتيب حسب الرقم في اسم الملف
         videos.sort(key=lambda x: (extract_number(x), x))
         return videos
     except Exception as e:
         print(f"❌ Failed to list videos: {e}")
         return []
-
-def delete_video_from_repo(filename, sha):
-    """حذف مقطع من المستودع"""
-    try:
-        delete_gh_file(f"Videos/{filename}", sha, f"Delete old video: {filename}")
-        print(f"   🗑️ Deleted: {filename}")
-        return True
-    except Exception as e:
-        print(f"   ❌ Failed to delete {filename}: {e}")
-        return False
 
 def get_current_rss_items():
     content, _ = get_gh_file("rss.xml")
@@ -148,8 +114,11 @@ def get_current_rss_items():
     
     return items
 
-def update_rss_with_new_videos(new_videos_filenames):
-    """تحديث RSS بإضافة مقاطع جديدة مع الحفاظ على آخر MAX_ITEMS"""
+def update_rss_with_new_videos(new_videos_data):
+    """
+    تحديث RSS بإضافة مقاطع جديدة
+    new_videos_data: قائمة تحتوي على (filename, title) لكل مقطع
+    """
     print("\n📡 Updating RSS feed...")
     
     current_items = get_current_rss_items()
@@ -157,12 +126,11 @@ def update_rss_with_new_videos(new_videos_filenames):
     
     # إنشاء عناصر جديدة
     new_items = []
-    for filename in new_videos_filenames:
-        clean_title_text = clean_title(filename)
+    for filename, title in new_videos_data:
         video_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{filename}"
         pub_date = datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0000')
         new_items.append({
-            'title': clean_title_text,
+            'title': title,
             'filename': filename,
             'link': video_url,
             'pub_date': pub_date
@@ -200,7 +168,7 @@ def update_rss_with_new_videos(new_videos_filenames):
     clean_xml = "\n".join(line for line in pretty_xml.split('\n') if line.strip())
     
     _, sha = get_gh_file("rss.xml")
-    save_gh_file("rss.xml", clean_xml, f"Update RSS: +{len(new_videos_filenames)} new videos", sha)
+    save_gh_file("rss.xml", clean_xml, f"Update RSS: +{len(new_videos_data)} new videos", sha)
     print(f"   ✅ RSS updated with {len(new_items)} new items, total: {len(all_items)}")
 
 def cleanup_old_videos(keep_filenames):
@@ -210,11 +178,9 @@ def cleanup_old_videos(keep_filenames):
     """
     print("\n🗑️ Cleaning up old videos...")
     
-    # جلب جميع المقاطع في المستودع
     all_videos = get_videos_in_repo()
     print(f"   Total videos in repo: {len(all_videos)}")
     
-    # تحديد المقاطع المراد حذفها (الموجودة وليست في قائمة الاحتفاظ)
     to_delete = [v for v in all_videos if v not in keep_filenames]
     
     if not to_delete:
@@ -226,7 +192,6 @@ def cleanup_old_videos(keep_filenames):
     deleted_count = 0
     for filename in to_delete:
         try:
-            # الحصول على sha للملف
             file_info = gh_api(f"contents/Videos/{filename}")
             if file_info and 'sha' in file_info:
                 delete_gh_file(f"Videos/{filename}", file_info['sha'], f"Delete old video: {filename}")
@@ -344,20 +309,34 @@ async def fetch_videos():
         print("-" * 40)
 
         downloaded_ids = []
-        downloaded_filenames = []
+        downloaded_data = []  # قائمة تحتوي على (filename, caption)
         
         for i, msg in enumerate(videos_to_download, 1):
+            # الحصول على الاسم الأصلي للملف
             if msg.video:
                 original_name = f"video_{msg.id}.mp4"
             else:
                 original_name = get_file_name(msg.document) or f"video_{msg.id}.mp4"
 
+            # الحصول على caption (العنوان النظيف من التليجرام)
+            caption = msg.text or msg.caption or ""
+            if caption:
+                # إزالة الروابط والعلامات غير المرغوب فيها من caption
+                caption = caption.strip()
+                # إذا كان caption طويلاً جداً، اختر أول 100 حرف
+                if len(caption) > 200:
+                    caption = caption[:200] + "..."
+            else:
+                caption = original_name.replace('.mp4', '').replace('_', ' ')
+            
             timestamp = msg.date.strftime("%Y%m%d_%H%M%S")
             safe_name = f"{msg.id}_{timestamp}_{original_name}"
             safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._- ")
             file_path = Path(VIDEO_FOLDER) / safe_name
 
             print(f"📥 ({i}/{len(videos_to_download)}) Downloading: {original_name} (ID: {msg.id})")
+            print(f"   📝 Caption: {caption[:80]}..." if len(caption) > 80 else f"   📝 Caption: {caption}")
+            
             try:
                 if msg.video:
                     await client.download_media(msg.video, str(file_path))
@@ -368,7 +347,7 @@ async def fetch_videos():
                     size_mb = file_path.stat().st_size / (1024 * 1024)
                     print(f"✅ Downloaded: {original_name} ({size_mb:.2f} MB)")
                     downloaded_ids.append(msg.id)
-                    downloaded_filenames.append(safe_name)
+                    downloaded_data.append((safe_name, caption))
                 else:
                     print(f"❌ Download failed: {original_name}")
                     if file_path.exists():
@@ -384,15 +363,15 @@ async def fetch_videos():
             save_last_id(new_last_id)
             print(f"\n📍 Updated last message ID to: {new_last_id}")
             
-            # تحديث RSS
-            if downloaded_filenames:
-                update_rss_with_new_videos(downloaded_filenames)
+            # تحديث RSS باستخدام caption كعنوان
+            if downloaded_data:
+                update_rss_with_new_videos(downloaded_data)
             
-            # بعد تحديث RSS، نحصل على قائمة الملفات المراد الاحتفاظ بها (آخر MAX_ITEMS)
+            # بعد تحديث RSS، نحصل على قائمة الملفات المراد الاحتفاظ بها
             current_rss_items = get_current_rss_items()
             keep_filenames = [item['filename'] for item in current_rss_items]
             
-            # حذف المقاطع القديمة من مجلد Videos (الموجودة في المستودع وليست في keep_filenames)
+            # حذف المقاطع القديمة
             deleted_count = cleanup_old_videos(keep_filenames)
             if deleted_count > 0:
                 print(f"   ✅ Deleted {deleted_count} old video(s) from repo")
