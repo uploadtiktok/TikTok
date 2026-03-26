@@ -1,0 +1,17 @@
+<?xml version="1.0" ?>
+<rss version="2.0">
+  <channel>
+    <title>مقاطع الفيديو - Zapier Shorts</title>
+    <link>https://github.com/uploadtiktok/TikTok</link>
+    <language>ar-sa</language>
+    <lastBuildDate>Thu, 26 Mar 2026 19:01:37 +0000</lastBuildDate>
+    <description>أحدث مقاطع الفيديو من قناة Zapier</description>
+    <item>
+      <title>هل الدروز طائفة إسلامية</title>
+      <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/74_20260326_190027_09_هل_الدروز_طائفة_إسلامية_merged_cleaned.mp4</link>
+      <pubDate>Thu, 26 Mar 2026 19:01:37 +0000</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/74_20260326_190027_09_هل_الدروز_طائفة_إسلامية_merged_cleaned.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/74_20260326_190027_09_هل_الدروز_طائفة_إسلامية_merged_cleaned.mp4</guid>
+    </item>
+  </channel>
+</rss>
