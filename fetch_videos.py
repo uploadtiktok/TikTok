@@ -12,15 +12,7 @@ API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 STRING_SESSION = os.environ.get("STRING_SESSION", "")
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "zapiershorts")
-
-batch_size_value = os.environ.get("BATCH_SIZE", "3")
-if batch_size_value == "" or batch_size_value is None:
-    BATCH_SIZE = 3
-else:
-    try:
-        BATCH_SIZE = int(batch_size_value)
-    except ValueError:
-        BATCH_SIZE = 3
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "3"))
 
 VIDEO_FOLDER = "Videos"
 LAST_MESSAGE_FILE = "last_message_id.json"
@@ -31,164 +23,126 @@ def setup_folders():
 
 def load_last_message():
     if os.path.exists(LAST_MESSAGE_FILE):
-        with open(LAST_MESSAGE_FILE, 'r') as f:
-            data = json.load(f)
-            return data.get("last_message_id", None)
+        with open(LAST_MESSAGE_FILE) as f:
+            return json.load(f).get("last_message_id", None)
     return None
 
 def save_last_message(message_id):
-    with open(LAST_MESSAGE_FILE, 'w') as f:
+    with open(LAST_MESSAGE_FILE, "w") as f:
         json.dump({"last_message_id": message_id}, f)
 
 def is_video_file(document):
-    if document and document.mime_type:
-        if document.mime_type.startswith('video/'):
-            return True
-        if document.attributes:
-            for attr in document.attributes:
-                if hasattr(attr, 'file_name') and attr.file_name:
-                    video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v']
-                    if any(attr.file_name.lower().endswith(ext) for ext in video_extensions):
-                        return True
+    if not document:
+        return False
+    if document.mime_type and document.mime_type.startswith("video/"):
+        return True
+    if document.attributes:
+        for attr in document.attributes:
+            if hasattr(attr, "file_name") and attr.file_name:
+                ext = attr.file_name.lower().split(".")[-1]
+                if ext in ("mp4", "avi", "mov", "mkv", "webm", "flv", "wmv", "m4v"):
+                    return True
     return False
 
 def get_file_name(document):
     if document.attributes:
         for attr in document.attributes:
-            if hasattr(attr, 'file_name') and attr.file_name:
+            if hasattr(attr, "file_name") and attr.file_name:
                 return attr.file_name
     return None
 
 async def fetch_videos():
-    print("🎬 GitHub Actions - Telegram Video Fetcher")
-    print(f"📦 Batch size: {BATCH_SIZE} videos per run")
+    print("🎬 Telegram Video Fetcher")
+    print(f"📦 Batch size: {BATCH_SIZE}")
     print("-" * 40)
-    
-    if API_ID == 0 or not API_HASH:
-        print("❌ Missing API_ID or API_HASH in secrets")
+
+    if not (API_ID and API_HASH and STRING_SESSION and CHANNEL_USERNAME):
+        print("❌ Missing secrets")
         return
-    
-    if not STRING_SESSION:
-        print("❌ Missing STRING_SESSION in secrets")
-        return
-    
+
     setup_folders()
-    last_message_id = load_last_message()
-    
-    if last_message_id:
-        print(f"📍 Last downloaded message ID: {last_message_id}")
-        print(f"🔍 Will fetch videos with ID > {last_message_id} (newer only)")
-    else:
-        print("📍 First run - will fetch videos starting from the beginning")
-    
+    last_id = load_last_message()
+    print(f"📍 Last message ID: {last_id if last_id else 'None (first run)'}")
+
     client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
-    
     try:
         await client.start()
-        print("✅ Connected to Telegram")
-        
-        print(f"🔍 Getting channel: @{CHANNEL_USERNAME}")
+        print("✅ Connected")
+
         channel = await client.get_entity(CHANNEL_USERNAME)
         print(f"📢 Channel: {channel.title}")
-        
-        print("🔍 Scanning messages for videos (from newest to oldest)...")
-        
-        # Get videos from newest to oldest
+
+        # Step 1: Get all video messages (oldest first)
+        print("🔍 Fetching video messages (oldest → newest)...")
         all_videos = []
-        async for message in client.iter_messages(channel, limit=None):
-            is_video = False
-            if message.video:
-                is_video = True
-            elif message.document and is_video_file(message.document):
-                is_video = True
-            
-            if is_video:
-                all_videos.append(message)
-        
-        print(f"🎬 Found {len(all_videos)} total videos in channel")
-        
+        async for msg in client.iter_messages(channel, reverse=True):
+            if msg.video or (msg.document and is_video_file(msg.document)):
+                all_videos.append(msg)
+
+        print(f"🎬 Total videos in channel: {len(all_videos)}")
+
         if not all_videos:
-            print("📭 No videos found in channel")
+            print("📭 No videos found.")
             return
-        
-        # Filter: ONLY get videos with ID GREATER than last_message_id (newer)
-        new_videos = []
-        if last_message_id:
-            for video in all_videos:
-                if video.id > last_message_id:
-                    new_videos.append(video)
+
+        # Step 2: Determine which videos are new (ID > last_id)
+        if last_id is None:
+            # First run: take first BATCH_SIZE videos (oldest)
+            new_videos = all_videos[:BATCH_SIZE]
         else:
-            # First run: get all videos (oldest first for initial download)
-            new_videos = list(reversed(all_videos))  # Reverse to get oldest first
-        
-        print(f"📊 New videos to download: {len(new_videos)}")
-        
+            # Subsequent runs: take videos with ID > last_id
+            new_videos = [v for v in all_videos if v.id > last_id]
+            # Limit to BATCH_SIZE
+            new_videos = new_videos[:BATCH_SIZE]
+
         if not new_videos:
-            print("\n📭 NO NEW VIDEOS TO DOWNLOAD")
-            print(f"   No videos with ID > {last_message_id}")
+            print("📭 No new videos to download.")
             return
-        
-        # Take only BATCH_SIZE videos (newest first, but we'll reverse for logical order)
-        if last_message_id:
-            # When there's a last ID, we want to download the newest first
-            videos_to_download = new_videos[:BATCH_SIZE]
-        else:
-            # First run: download oldest first
-            videos_to_download = new_videos[:BATCH_SIZE]
-        
-        print(f"📥 Downloading {len(videos_to_download)} new videos...")
-        print("-" * 40)
-        
-        downloaded_count = 0
-        last_downloaded_id = None
-        
-        for i, message in enumerate(videos_to_download):
-            if message.video:
-                original_filename = f"video_{message.id}.mp4"
-            else:
-                original_filename = get_file_name(message.document) or f"video_{message.id}.mp4"
-            
-            timestamp = message.date.strftime("%Y%m%d_%H%M%S")
-            file_name = f"{message.id}_{timestamp}_{original_filename}"
-            file_name = "".join(c for c in file_name if c.isalnum() or c in '._- ')
-            file_path = os.path.join(VIDEO_FOLDER, file_name)
-            
-            print(f"📥 Downloading ({i+1}/{len(videos_to_download)}): {original_filename} (ID: {message.id})")
-            
+
+        print(f"📥 Downloading {len(new_videos)} new video(s)...")
+
+        downloaded_ids = []
+        for idx, msg in enumerate(new_videos, 1):
+            original_name = get_file_name(msg.document) if msg.document else f"video_{msg.id}.mp4"
+            if not original_name:
+                original_name = f"video_{msg.id}.mp4"
+
+            timestamp = msg.date.strftime("%Y%m%d_%H%M%S")
+            safe_name = f"{msg.id}_{timestamp}_{original_name}"
+            safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._- ")
+            file_path = Path(VIDEO_FOLDER) / safe_name
+
+            print(f"📥 ({idx}/{len(new_videos)}) Downloading: {original_name} (ID: {msg.id})")
             try:
-                if message.video:
-                    await client.download_media(message.video, file_path)
+                if msg.video:
+                    await client.download_media(msg.video, str(file_path))
                 else:
-                    await client.download_media(message.document, file_path)
-                
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                    size_mb = os.path.getsize(file_path) / (1024 * 1024)
-                    print(f"✅ Downloaded: {original_filename} ({size_mb:.2f} MB)")
-                    downloaded_count += 1
-                    # Update to the latest downloaded ID (highest number)
-                    if last_downloaded_id is None or message.id > last_downloaded_id:
-                        last_downloaded_id = message.id
+                    await client.download_media(msg.document, str(file_path))
+
+                if file_path.exists() and file_path.stat().st_size > 0:
+                    size_mb = file_path.stat().st_size / (1024 * 1024)
+                    print(f"✅ Downloaded: {original_name} ({size_mb:.2f} MB)")
+                    downloaded_ids.append(msg.id)
                 else:
-                    print(f"❌ Download failed: {original_filename}")
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                    break
+                    print(f"❌ Download failed: {original_name}")
+                    if file_path.exists():
+                        file_path.unlink()
             except Exception as e:
-                print(f"⚠️ Error: {e}")
-                break
-        
-        # Update last message ID to the highest downloaded ID
-        if last_downloaded_id:
-            save_last_message(last_downloaded_id)
-            print(f"📍 Updated last message ID to: {last_downloaded_id}")
-        
+                print(f"⚠️ Error downloading {original_name}: {e}")
+
+        # Step 3: Update last_id to the maximum ID downloaded in this run
+        if downloaded_ids:
+            new_last_id = max(downloaded_ids)
+            save_last_message(new_last_id)
+            print(f"📍 Updated last message ID to: {new_last_id}")
+
         print("\n" + "="*50)
         print(f"📈 SUMMARY:")
-        print(f"   📹 Total videos in channel: {len(all_videos)}")
-        print(f"   ✅ Successfully downloaded: {downloaded_count}")
+        print(f"   ✅ Downloaded: {len(downloaded_ids)}")
+        print(f"   📁 New videos added to '{VIDEO_FOLDER}/'")
         print(f"   📍 Last message ID: {load_last_message()}")
         print("="*50)
-        
+
     except Exception as e:
         print(f"❌ Error: {e}")
         raise
