@@ -43,5 +43,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git pull origin main --rebase || true
-          git add Videos/ downloaded_videos.json
+          git add Videos/ last_message_id.json
           git diff --quiet && git diff --staged --quiet || (git commit -m "Auto: Add new videos from Telegram [$(date +'%Y-%m-%d')]" && git push origin main)
