@@ -20,7 +20,7 @@ except ValueError:
     BATCH_SIZE = 3
 
 VIDEO_FOLDER = "Videos"
-LAST_ID_FILE = "last_message_id.json"  # حفظ آخر ID
+LAST_ID_FILE = "last_message_id.json"
 # ====================================
 
 def setup_folders():
@@ -76,9 +76,9 @@ async def fetch_videos():
     
     if last_id:
         print(f"📍 Last downloaded message ID: {last_id}")
-        print(f"🔍 Will fetch videos with ID > {last_id} (newer)")
+        print(f"🔍 Searching for videos with ID > {last_id} (newer videos)...")
     else:
-        print("📍 First run - will fetch oldest videos first")
+        print("📍 First run - fetching oldest videos first")
 
     client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
     try:
@@ -88,8 +88,8 @@ async def fetch_videos():
         channel = await client.get_entity(CHANNEL_USERNAME)
         print(f"📢 Channel: {channel.title}")
 
-        # جلب جميع مقاطع الفيديو من الأقدم إلى الأحدث
-        print("🔍 Fetching video messages (oldest → newest)...")
+        # جلب جميع مقاطع الفيديو من الأحدث إلى الأقدم (للكشف السريع عن الجديد)
+        print("🔍 Scanning for video messages...")
         all_videos = []
         async for msg in client.iter_messages(channel, reverse=True):
             if msg.video or (msg.document and is_video_file(msg.document)):
@@ -99,23 +99,34 @@ async def fetch_videos():
         print(f"🎬 Total videos in channel: {total}")
 
         if total == 0:
-            print("📭 No videos found.")
+            print("📭 No videos found in channel.")
             return
 
-        # تحديد المقاطع الجديدة (ID > last_id)
+        # عرض جميع IDs الموجودة
+        ids_list = [v.id for v in all_videos]
+        print(f"📋 Available video IDs: {ids_list}")
+
+        # تحديد المقاطع الجديدة
         if last_id is None:
-            # أول تشغيل: خذ أول BATCH_SIZE (أقدمها)
+            # أول تشغيل: تحميل أقدم المقاطع
             videos_to_download = all_videos[:BATCH_SIZE]
             print(f"📥 First run: downloading oldest {len(videos_to_download)} videos")
         else:
-            # التشغيل التالي: خذ المقاطع التي ID > last_id (أحدث)
+            # فلترة المقاطع التي ID > last_id
             videos_to_download = [v for v in all_videos if v.id > last_id]
+            
+            if not videos_to_download:
+                print("\n" + "="*50)
+                print("📭 NO NEW VIDEOS TO DOWNLOAD")
+                print(f"   Last downloaded ID: {last_id}")
+                print(f"   Latest video ID in channel: {max(ids_list)}")
+                print(f"   All videos up to ID {max(ids_list)} have been downloaded.")
+                print("="*50)
+                return
+            
+            # أخذ فقط BATCH_SIZE من المقاطع الجديدة (الأحدث)
             videos_to_download = videos_to_download[:BATCH_SIZE]
-            print(f"📥 Downloading {len(videos_to_download)} new video(s) (ID > {last_id})")
-
-        if not videos_to_download:
-            print("📭 No new videos to download.")
-            return
+            print(f"📥 Found {len(videos_to_download)} new video(s) with ID > {last_id}")
 
         print("-" * 40)
 
@@ -155,14 +166,18 @@ async def fetch_videos():
         if downloaded_ids:
             new_last_id = max(downloaded_ids)
             save_last_id(new_last_id)
-            print(f"📍 Updated last message ID to: {new_last_id}")
-            print(f"   🔗 Example link: https://t.me/{CHANNEL_USERNAME}/{new_last_id}")
+            print(f"\n📍 Updated last message ID to: {new_last_id}")
+            print(f"   🔗 Example: https://t.me/{CHANNEL_USERNAME}/{new_last_id}")
 
         print("\n" + "="*50)
         print(f"📈 SUMMARY:")
         print(f"   ✅ Downloaded: {len(downloaded_ids)}")
         print(f"   📁 Saved in: {VIDEO_FOLDER}/")
         print(f"   📍 Last message ID: {load_last_id()}")
+        
+        remaining = len([v for v in all_videos if v.id > load_last_id()]) if load_last_id() else 0
+        if remaining > 0:
+            print(f"   📦 Remaining videos to download: {remaining}")
         print("="*50)
 
     except Exception as e:
