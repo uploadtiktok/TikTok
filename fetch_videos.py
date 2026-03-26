@@ -13,16 +13,17 @@ API_HASH = os.environ.get("API_HASH", "")
 STRING_SESSION = os.environ.get("STRING_SESSION", "")
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "zapiershorts")
 
-# Handle BATCH_SIZE safely
-batch_size_str = os.environ.get("BATCH_SIZE", "3")
-try:
-    BATCH_SIZE = int(batch_size_str) if batch_size_str else 3
-except ValueError:
+batch_size_value = os.environ.get("BATCH_SIZE", "3")
+if batch_size_value == "" or batch_size_value is None:
     BATCH_SIZE = 3
+else:
+    try:
+        BATCH_SIZE = int(batch_size_value)
+    except ValueError:
+        BATCH_SIZE = 3
 
 VIDEO_FOLDER = "Videos"
 HISTORY_FILE = "downloaded_videos.json"
-LAST_MESSAGE_FILE = "last_message_id.json"
 # ====================================
 
 def setup_folders():
@@ -37,17 +38,6 @@ def load_history():
 def save_history(history):
     with open(HISTORY_FILE, 'w') as f:
         json.dump(list(history), f)
-
-def load_last_message():
-    if os.path.exists(LAST_MESSAGE_FILE):
-        with open(LAST_MESSAGE_FILE, 'r') as f:
-            data = json.load(f)
-            return data.get("last_message_id", None)
-    return None
-
-def save_last_message(message_id):
-    with open(LAST_MESSAGE_FILE, 'w') as f:
-        json.dump({"last_message_id": message_id}, f)
 
 def is_video_file(document):
     if document and document.mime_type:
@@ -83,11 +73,8 @@ async def fetch_videos():
     
     setup_folders()
     downloaded = load_history()
-    last_message_id = load_last_message()
     
     print(f"📊 Already downloaded: {len(downloaded)} videos")
-    if last_message_id:
-        print(f"📍 Last downloaded message ID: {last_message_id}")
     
     client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
     
@@ -99,10 +86,11 @@ async def fetch_videos():
         channel = await client.get_entity(CHANNEL_USERNAME)
         print(f"📢 Channel: {channel.title}")
         
-        print("🔍 Scanning messages for videos...")
+        print("🔍 Scanning messages for videos (from oldest to newest)...")
         
+        # IMPORTANT: Get messages from oldest to newest
         all_videos = []
-        async for message in client.iter_messages(channel, limit=None, offset_id=0):
+        async for message in client.iter_messages(channel, limit=None, offset_id=0, reverse=True):
             is_video = False
             if message.video:
                 is_video = True
@@ -114,23 +102,41 @@ async def fetch_videos():
         
         print(f"🎬 Found {len(all_videos)} total videos in channel")
         
-        start_index = 0
-        if last_message_id:
-            for i, msg in enumerate(all_videos):
-                if msg.id == last_message_id:
-                    start_index = i + 1
-                    break
+        if not all_videos:
+            print("📭 No videos found in channel")
+            return
         
-        new_videos = all_videos[start_index:start_index + BATCH_SIZE]
+        # Find videos that are NOT in downloaded history
+        new_videos = []
+        for video in all_videos:
+            # Create the same filename logic to check if already downloaded
+            if video.video:
+                original_filename = f"video_{video.id}.mp4"
+            else:
+                original_filename = get_file_name(video.document) or f"video_{video.id}.mp4"
+            
+            timestamp = video.date.strftime("%Y%m%d_%H%M%S")
+            file_name = f"{video.id}_{timestamp}_{original_filename}"
+            file_name = "".join(c for c in file_name if c.isalnum() or c in '._- ')
+            
+            if file_name not in downloaded:
+                new_videos.append(video)
+        
+        print(f"📊 New videos to download: {len(new_videos)}")
         
         if not new_videos:
             print("\n📭 NO NEW VIDEOS TO DOWNLOAD")
+            print(f"   All {len(all_videos)} videos have been downloaded already.")
             return
         
-        print(f"📥 Downloading {len(new_videos)} new videos...")
+        # Take only BATCH_SIZE videos
+        videos_to_download = new_videos[:BATCH_SIZE]
+        
+        print(f"📥 Downloading {len(videos_to_download)} new videos...")
+        print("-" * 40)
         
         downloaded_count = 0
-        for message in new_videos:
+        for message in videos_to_download:
             if message.video:
                 original_filename = f"video_{message.id}.mp4"
             else:
@@ -140,10 +146,6 @@ async def fetch_videos():
             file_name = f"{message.id}_{timestamp}_{original_filename}"
             file_name = "".join(c for c in file_name if c.isalnum() or c in '._- ')
             file_path = os.path.join(VIDEO_FOLDER, file_name)
-            
-            if file_name in downloaded:
-                print(f"⏭️  Skipping: {original_filename}")
-                continue
             
             print(f"📥 Downloading: {original_filename}")
             
@@ -158,7 +160,6 @@ async def fetch_videos():
                     print(f"✅ Downloaded: {original_filename} ({size_mb:.2f} MB)")
                     downloaded.add(file_name)
                     downloaded_count += 1
-                    save_last_message(message.id)
                 else:
                     print(f"❌ Download failed: {original_filename}")
                     if os.path.exists(file_path):
@@ -166,13 +167,15 @@ async def fetch_videos():
             except Exception as e:
                 print(f"⚠️ Error: {e}")
         
+        # Save updated history
         save_history(downloaded)
         
         print("\n" + "="*50)
         print(f"📈 SUMMARY:")
-        print(f"   ✅ Downloaded: {downloaded_count}")
-        print(f"   📁 Total in history: {len(downloaded)}")
-        print(f"   📍 Last message ID: {load_last_message()}")
+        print(f"   📹 Total videos in channel: {len(all_videos)}")
+        print(f"   📊 Already downloaded: {len(downloaded)}")
+        print(f"   ✅ Newly downloaded: {downloaded_count}")
+        print(f"   📦 Remaining to download: {len(new_videos) - downloaded_count}")
         print("="*50)
         
     except Exception as e:
