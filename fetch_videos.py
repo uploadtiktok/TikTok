@@ -30,7 +30,6 @@ def setup_folders():
     Path(VIDEO_FOLDER).mkdir(parents=True, exist_ok=True)
 
 def load_last_message():
-    """Load last downloaded message ID"""
     if os.path.exists(LAST_MESSAGE_FILE):
         with open(LAST_MESSAGE_FILE, 'r') as f:
             data = json.load(f)
@@ -38,12 +37,10 @@ def load_last_message():
     return None
 
 def save_last_message(message_id):
-    """Save last downloaded message ID"""
     with open(LAST_MESSAGE_FILE, 'w') as f:
         json.dump({"last_message_id": message_id}, f)
 
 def is_video_file(document):
-    """Check if document is a video file"""
     if document and document.mime_type:
         if document.mime_type.startswith('video/'):
             return True
@@ -56,7 +53,6 @@ def is_video_file(document):
     return False
 
 def get_file_name(document):
-    """Extract filename from document"""
     if document.attributes:
         for attr in document.attributes:
             if hasattr(attr, 'file_name') and attr.file_name:
@@ -94,11 +90,11 @@ async def fetch_videos():
         channel = await client.get_entity(CHANNEL_USERNAME)
         print(f"📢 Channel: {channel.title}")
         
-        print("🔍 Scanning messages for videos (from newest to oldest)...")
+        print("🔍 Scanning messages for videos (from oldest to newest)...")
         
-        # Get videos from newest to oldest
+        # Get videos from oldest to newest using reverse=True
         all_videos = []
-        async for message in client.iter_messages(channel, limit=None):
+        async for message in client.iter_messages(channel, limit=None, reverse=True):
             is_video = False
             if message.video:
                 is_video = True
@@ -114,20 +110,15 @@ async def fetch_videos():
             print("📭 No videos found in channel")
             return
         
-        # Find videos that are NEWER than last_message_id
-        new_videos = []
-        
+        # Find videos after last_message_id
+        start_index = 0
         if last_message_id:
-            for video in all_videos:
+            for i, video in enumerate(all_videos):
                 if video.id == last_message_id:
+                    start_index = i + 1
                     break
-                new_videos.append(video)
-        else:
-            # First run: get all videos
-            new_videos = all_videos
         
-        # Reverse to get oldest first for downloading
-        new_videos.reverse()
+        new_videos = all_videos[start_index:]
         
         print(f"📊 New videos to download: {len(new_videos)}")
         
@@ -176,7 +167,7 @@ async def fetch_videos():
             except Exception as e:
                 print(f"⚠️ Error: {e}")
         
-        # Update last message ID if we downloaded any
+        # Update last message ID only if we downloaded all BATCH_SIZE videos
         if last_downloaded_id:
             save_last_message(last_downloaded_id)
             print(f"📍 Updated last message ID to: {last_downloaded_id}")
