@@ -29,10 +29,10 @@ except ValueError:
 
 VIDEO_FOLDER = "Videos"
 LAST_ID_FILE = "last_message_id.json"
-MAX_RSS_ITEMS = 3  # 3 عناصر فقط في الخلاصة
+MAX_ITEMS = 3  # عدد المقاطع التي نحتفظ بها في المجلد و RSS
 # ====================================
 
-# ========== RSS HELPER FUNCTIONS ==========
+# ========== RSS & GITHUB HELPER FUNCTIONS ==========
 def extract_number(filename):
     match = re.search(r'(\d+)', filename)
     if match:
@@ -95,6 +95,34 @@ def save_gh_file(path, content, msg, sha=None):
         data['sha'] = sha
     return gh_api(f"contents/{path}", 'PUT', data)
 
+def delete_gh_file(path, sha, msg):
+    data = {'message': msg, 'sha': sha, 'branch': BRANCH}
+    return gh_api(f"contents/{path}", 'DELETE', data)
+
+def get_videos_in_repo():
+    """جلب قائمة جميع مقاطع الفيديو في المستودع"""
+    try:
+        res = gh_api("contents/Videos")
+        if not res:
+            return []
+        videos = [item['name'] for item in res if item['name'].endswith('.mp4')]
+        # ترتيب حسب الرقم في اسم الملف
+        videos.sort(key=lambda x: (extract_number(x), x))
+        return videos
+    except Exception as e:
+        print(f"❌ Failed to list videos: {e}")
+        return []
+
+def delete_video_from_repo(filename, sha):
+    """حذف مقطع من المستودع"""
+    try:
+        delete_gh_file(f"Videos/{filename}", sha, f"Delete old video: {filename}")
+        print(f"   🗑️ Deleted: {filename}")
+        return True
+    except Exception as e:
+        print(f"   ❌ Failed to delete {filename}: {e}")
+        return False
+
 def get_current_rss_items():
     content, _ = get_gh_file("rss.xml")
     if not content:
@@ -121,14 +149,13 @@ def get_current_rss_items():
     return items
 
 def update_rss_with_new_videos(new_videos_filenames):
-    """تحديث RSS بإضافة مقاطع جديدة مع الحفاظ على آخر 3 عناصر"""
+    """تحديث RSS بإضافة مقاطع جديدة مع الحفاظ على آخر MAX_ITEMS"""
     print("\n📡 Updating RSS feed...")
     
-    # الحصول على العناصر الحالية
     current_items = get_current_rss_items()
     print(f"   Current RSS items: {len(current_items)}")
     
-    # إنشاء عناصر جديدة للمقاطع الجديدة
+    # إنشاء عناصر جديدة
     new_items = []
     for filename in new_videos_filenames:
         clean_title_text = clean_title(filename)
@@ -141,16 +168,16 @@ def update_rss_with_new_videos(new_videos_filenames):
             'pub_date': pub_date
         })
     
-    # دمج العناصر: العناصر الجديدة في البداية + العناصر القديمة
+    # دمج: الجديدة في البداية + القديمة
     all_items = new_items + current_items
     
-    # الحفاظ على آخر 3 عناصر فقط
-    if len(all_items) > MAX_RSS_ITEMS:
-        removed = len(all_items) - MAX_RSS_ITEMS
-        all_items = all_items[:MAX_RSS_ITEMS]
-        print(f"   Removed {removed} old items (keeping last {MAX_RSS_ITEMS})")
+    # الاحتفاظ بآخر MAX_ITEMS فقط
+    if len(all_items) > MAX_ITEMS:
+        removed = len(all_items) - MAX_ITEMS
+        all_items = all_items[:MAX_ITEMS]
+        print(f"   Removed {removed} old items from RSS (keeping last {MAX_ITEMS})")
     
-    # بناء XML جديد
+    # بناء XML
     rss = ET.Element('rss', version='2.0')
     channel = ET.SubElement(rss, 'channel')
     ET.SubElement(channel, 'title').text = 'مقاطع الفيديو - Zapier Shorts'
@@ -176,23 +203,41 @@ def update_rss_with_new_videos(new_videos_filenames):
     save_gh_file("rss.xml", clean_xml, f"Update RSS: +{len(new_videos_filenames)} new videos", sha)
     print(f"   ✅ RSS updated with {len(new_items)} new items, total: {len(all_items)}")
 
-def create_empty_rss():
-    rss = ET.Element('rss', version='2.0')
-    channel = ET.SubElement(rss, 'channel')
-    ET.SubElement(channel, 'title').text = 'مقاطع الفيديو - Zapier Shorts'
-    ET.SubElement(channel, 'link').text = f"https://github.com/{REPO}"
-    ET.SubElement(channel, 'language').text = 'ar-sa'
-    ET.SubElement(channel, 'lastBuildDate').text = datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0000')
-    ET.SubElement(channel, 'description').text = 'لا توجد مقاطع حالياً'
+def cleanup_old_videos(keep_filenames):
+    """
+    حذف المقاطع القديمة من مجلد Videos
+    keep_filenames: قائمة بأسماء الملفات التي نريد الاحتفاظ بها (آخر 3)
+    """
+    print("\n🗑️ Cleaning up old videos...")
     
-    xml_str = ET.tostring(rss, encoding='utf-8')
-    dom = minidom.parseString(xml_str)
-    pretty_xml = dom.toprettyxml(indent="  ")
-    clean_xml = "\n".join(line for line in pretty_xml.split('\n') if line.strip())
+    # جلب جميع المقاطع في المستودع
+    all_videos = get_videos_in_repo()
+    print(f"   Total videos in repo: {len(all_videos)}")
     
-    _, sha = get_gh_file("rss.xml")
-    save_gh_file("rss.xml", clean_xml, "Empty RSS (no videos)", sha)
-    print("✅ RSS emptied")
+    # تحديد المقاطع المراد حذفها (الموجودة وليست في قائمة الاحتفاظ)
+    to_delete = [v for v in all_videos if v not in keep_filenames]
+    
+    if not to_delete:
+        print("   No old videos to delete")
+        return 0
+    
+    print(f"   Deleting {len(to_delete)} old video(s)...")
+    
+    deleted_count = 0
+    for filename in to_delete:
+        try:
+            # الحصول على sha للملف
+            file_info = gh_api(f"contents/Videos/{filename}")
+            if file_info and 'sha' in file_info:
+                delete_gh_file(f"Videos/{filename}", file_info['sha'], f"Delete old video: {filename}")
+                print(f"   🗑️ Deleted: {filename}")
+                deleted_count += 1
+            else:
+                print(f"   ⚠️ Could not find {filename} in repo")
+        except Exception as e:
+            print(f"   ❌ Failed to delete {filename}: {e}")
+    
+    return deleted_count
 
 # ========== TELEGRAM HELPER FUNCTIONS ==========
 def setup_folders():
@@ -234,9 +279,9 @@ def get_file_name(document):
 
 # ========== MAIN FUNCTION ==========
 async def fetch_videos():
-    print("🎬 Telegram Video Fetcher with RSS Integration")
+    print("🎬 Telegram Video Fetcher with RSS & Cleanup")
     print(f"📦 Batch size: {BATCH_SIZE}")
-    print(f"📡 Max RSS items: {MAX_RSS_ITEMS}")
+    print(f"📁 Keep last: {MAX_ITEMS} videos")
     print("-" * 40)
 
     if not (API_ID and API_HASH and STRING_SESSION and CHANNEL_USERNAME):
@@ -342,11 +387,20 @@ async def fetch_videos():
             # تحديث RSS
             if downloaded_filenames:
                 update_rss_with_new_videos(downloaded_filenames)
+            
+            # بعد تحديث RSS، نحصل على قائمة الملفات المراد الاحتفاظ بها (آخر MAX_ITEMS)
+            current_rss_items = get_current_rss_items()
+            keep_filenames = [item['filename'] for item in current_rss_items]
+            
+            # حذف المقاطع القديمة من مجلد Videos (الموجودة في المستودع وليست في keep_filenames)
+            deleted_count = cleanup_old_videos(keep_filenames)
+            if deleted_count > 0:
+                print(f"   ✅ Deleted {deleted_count} old video(s) from repo")
 
         print("\n" + "="*50)
         print(f"📈 SUMMARY:")
         print(f"   ✅ Downloaded: {len(downloaded_ids)}")
-        print(f"   📁 Saved in: {VIDEO_FOLDER}/")
+        print(f"   📁 Keeping last {MAX_ITEMS} videos in repo")
         print(f"   📍 Last message ID: {load_last_id()}")
         print("="*50)
 
