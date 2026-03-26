@@ -1,0 +1,31 @@
+<?xml version="1.0" ?>
+<rss version="2.0">
+  <channel>
+    <title>مقاطع الفيديو - Zapier Shorts</title>
+    <link>https://github.com/uploadtiktok/TikTok</link>
+    <language>ar-sa</language>
+    <lastBuildDate>Thu, 26 Mar 2026 22:42:38 +0000</lastBuildDate>
+    <description>أحدث مقاطع الفيديو من قناة Zapier</description>
+    <item>
+      <title>هل الدروز طائفة إسلامية</title>
+      <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/91_20260326_211428_video_91.mp4</link>
+      <pubDate>Thu, 26 Mar 2026 22:42:38 +0000</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/91_20260326_211428_video_91.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/91_20260326_211428_video_91.mp4</guid>
+    </item>
+    <item>
+      <title>حكم ترك صلاة الجمعة لمن تحول للسنة</title>
+      <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/92_20260326_211537_video_92.mp4</link>
+      <pubDate>Thu, 26 Mar 2026 22:42:38 +0000</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/92_20260326_211537_video_92.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/92_20260326_211537_video_92.mp4</guid>
+    </item>
+    <item>
+      <title>هل تجب طاعة الوالدين إذا كانا من الدروز</title>
+      <link>https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/93_20260326_211605_video_93.mp4</link>
+      <pubDate>Thu, 26 Mar 2026 22:42:38 +0000</pubDate>
+      <enclosure url="https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/93_20260326_211605_video_93.mp4" type="video/mp4"/>
+      <guid isPermaLink="false">https://raw.githubusercontent.com/uploadtiktok/TikTok/main/Videos/93_20260326_211605_video_93.mp4</guid>
+    </item>
+  </channel>
+</rss>
