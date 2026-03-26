@@ -42,6 +42,18 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull origin main --rebase || true
-          git add Videos/ last_message_id.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto: Add new videos from Telegram [$(date +'%Y-%m-%d')]" && git push origin main)
+          
+          # تحديث من المستودع البعيد
+          git fetch origin main
+          git reset --hard origin/main || true
+          
+          # إضافة الملفات الجديدة فقط (بدون last_message_id.json)
+          git add Videos/ last_index.json
+          
+          # إنشاء commit إذا كان هناك تغييرات
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto: Add new videos from Telegram [$(date +'%Y-%m-%d')]"
+            git push origin main
+          else
+            echo "No new changes to commit"
+          fi
