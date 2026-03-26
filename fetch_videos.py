@@ -92,7 +92,7 @@ async def fetch_videos():
         
         print("🔍 Scanning messages for videos (from oldest to newest)...")
         
-        # Get videos from oldest to newest using reverse=True
+        # Get videos from oldest to newest
         all_videos = []
         async for message in client.iter_messages(channel, limit=None, reverse=True):
             is_video = False
@@ -110,7 +110,7 @@ async def fetch_videos():
             print("📭 No videos found in channel")
             return
         
-        # Find videos after last_message_id
+        # Find the index to start from
         start_index = 0
         if last_message_id:
             for i, video in enumerate(all_videos):
@@ -118,17 +118,15 @@ async def fetch_videos():
                     start_index = i + 1
                     break
         
-        new_videos = all_videos[start_index:]
+        # Videos to download (starting from start_index)
+        videos_to_download = all_videos[start_index:start_index + BATCH_SIZE]
         
-        print(f"📊 New videos to download: {len(new_videos)}")
+        print(f"📊 New videos to download: {len(videos_to_download)}")
         
-        if not new_videos:
+        if not videos_to_download:
             print("\n📭 NO NEW VIDEOS TO DOWNLOAD")
             print(f"   All {len(all_videos)} videos have been downloaded already.")
             return
-        
-        # Take only BATCH_SIZE videos
-        videos_to_download = new_videos[:BATCH_SIZE]
         
         print(f"📥 Downloading {len(videos_to_download)} new videos...")
         print("-" * 40)
@@ -136,7 +134,7 @@ async def fetch_videos():
         downloaded_count = 0
         last_downloaded_id = None
         
-        for message in videos_to_download:
+        for i, message in enumerate(videos_to_download):
             if message.video:
                 original_filename = f"video_{message.id}.mp4"
             else:
@@ -147,7 +145,7 @@ async def fetch_videos():
             file_name = "".join(c for c in file_name if c.isalnum() or c in '._- ')
             file_path = os.path.join(VIDEO_FOLDER, file_name)
             
-            print(f"📥 Downloading: {original_filename}")
+            print(f"📥 Downloading ({i+1}/{len(videos_to_download)}): {original_filename}")
             
             try:
                 if message.video:
@@ -164,10 +162,12 @@ async def fetch_videos():
                     print(f"❌ Download failed: {original_filename}")
                     if os.path.exists(file_path):
                         os.remove(file_path)
+                    break  # Stop if download fails
             except Exception as e:
                 print(f"⚠️ Error: {e}")
+                break
         
-        # Update last message ID only if we downloaded all BATCH_SIZE videos
+        # Update last message ID to the last successfully downloaded video
         if last_downloaded_id:
             save_last_message(last_downloaded_id)
             print(f"📍 Updated last message ID to: {last_downloaded_id}")
@@ -175,8 +175,8 @@ async def fetch_videos():
         print("\n" + "="*50)
         print(f"📈 SUMMARY:")
         print(f"   📹 Total videos in channel: {len(all_videos)}")
-        print(f"   ✅ Newly downloaded: {downloaded_count}")
-        print(f"   📦 Remaining to download: {len(new_videos) - downloaded_count}")
+        print(f"   ✅ Successfully downloaded: {downloaded_count}")
+        print(f"   📦 Remaining to download: {len(all_videos) - (start_index + downloaded_count)}")
         print(f"   📍 Last message ID: {load_last_message()}")
         print("="*50)
         
