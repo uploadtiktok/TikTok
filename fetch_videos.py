@@ -12,7 +12,13 @@ API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 STRING_SESSION = os.environ.get("STRING_SESSION", "")
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "zapiershorts")
-BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 3))
+
+# Handle BATCH_SIZE safely
+batch_size_str = os.environ.get("BATCH_SIZE", "3")
+try:
+    BATCH_SIZE = int(batch_size_str) if batch_size_str else 3
+except ValueError:
+    BATCH_SIZE = 3
 
 VIDEO_FOLDER = "Videos"
 HISTORY_FILE = "downloaded_videos.json"
