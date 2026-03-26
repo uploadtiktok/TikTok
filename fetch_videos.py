@@ -77,8 +77,9 @@ async def fetch_videos():
     
     if last_message_id:
         print(f"📍 Last downloaded message ID: {last_message_id}")
+        print(f"🔍 Will fetch videos with ID > {last_message_id} (newer only)")
     else:
-        print("📍 First run - will start from the beginning")
+        print("📍 First run - will fetch videos starting from the beginning")
     
     client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
     
@@ -90,11 +91,11 @@ async def fetch_videos():
         channel = await client.get_entity(CHANNEL_USERNAME)
         print(f"📢 Channel: {channel.title}")
         
-        print("🔍 Scanning messages for videos (from oldest to newest)...")
+        print("🔍 Scanning messages for videos (from newest to oldest)...")
         
-        # Get videos from oldest to newest
+        # Get videos from newest to oldest
         all_videos = []
-        async for message in client.iter_messages(channel, limit=None, reverse=True):
+        async for message in client.iter_messages(channel, limit=None):
             is_video = False
             if message.video:
                 is_video = True
@@ -110,23 +111,30 @@ async def fetch_videos():
             print("📭 No videos found in channel")
             return
         
-        # Find the index to start from
-        start_index = 0
+        # Filter: ONLY get videos with ID GREATER than last_message_id (newer)
+        new_videos = []
         if last_message_id:
-            for i, video in enumerate(all_videos):
-                if video.id == last_message_id:
-                    start_index = i + 1
-                    break
+            for video in all_videos:
+                if video.id > last_message_id:
+                    new_videos.append(video)
+        else:
+            # First run: get all videos (oldest first for initial download)
+            new_videos = list(reversed(all_videos))  # Reverse to get oldest first
         
-        # Videos to download (starting from start_index)
-        videos_to_download = all_videos[start_index:start_index + BATCH_SIZE]
+        print(f"📊 New videos to download: {len(new_videos)}")
         
-        print(f"📊 New videos to download: {len(videos_to_download)}")
-        
-        if not videos_to_download:
+        if not new_videos:
             print("\n📭 NO NEW VIDEOS TO DOWNLOAD")
-            print(f"   All {len(all_videos)} videos have been downloaded already.")
+            print(f"   No videos with ID > {last_message_id}")
             return
+        
+        # Take only BATCH_SIZE videos (newest first, but we'll reverse for logical order)
+        if last_message_id:
+            # When there's a last ID, we want to download the newest first
+            videos_to_download = new_videos[:BATCH_SIZE]
+        else:
+            # First run: download oldest first
+            videos_to_download = new_videos[:BATCH_SIZE]
         
         print(f"📥 Downloading {len(videos_to_download)} new videos...")
         print("-" * 40)
@@ -145,7 +153,7 @@ async def fetch_videos():
             file_name = "".join(c for c in file_name if c.isalnum() or c in '._- ')
             file_path = os.path.join(VIDEO_FOLDER, file_name)
             
-            print(f"📥 Downloading ({i+1}/{len(videos_to_download)}): {original_filename}")
+            print(f"📥 Downloading ({i+1}/{len(videos_to_download)}): {original_filename} (ID: {message.id})")
             
             try:
                 if message.video:
@@ -157,17 +165,19 @@ async def fetch_videos():
                     size_mb = os.path.getsize(file_path) / (1024 * 1024)
                     print(f"✅ Downloaded: {original_filename} ({size_mb:.2f} MB)")
                     downloaded_count += 1
-                    last_downloaded_id = message.id
+                    # Update to the latest downloaded ID (highest number)
+                    if last_downloaded_id is None or message.id > last_downloaded_id:
+                        last_downloaded_id = message.id
                 else:
                     print(f"❌ Download failed: {original_filename}")
                     if os.path.exists(file_path):
                         os.remove(file_path)
-                    break  # Stop if download fails
+                    break
             except Exception as e:
                 print(f"⚠️ Error: {e}")
                 break
         
-        # Update last message ID to the last successfully downloaded video
+        # Update last message ID to the highest downloaded ID
         if last_downloaded_id:
             save_last_message(last_downloaded_id)
             print(f"📍 Updated last message ID to: {last_downloaded_id}")
@@ -176,7 +186,6 @@ async def fetch_videos():
         print(f"📈 SUMMARY:")
         print(f"   📹 Total videos in channel: {len(all_videos)}")
         print(f"   ✅ Successfully downloaded: {downloaded_count}")
-        print(f"   📦 Remaining to download: {len(all_videos) - (start_index + downloaded_count)}")
         print(f"   📍 Last message ID: {load_last_message()}")
         print("="*50)
         
