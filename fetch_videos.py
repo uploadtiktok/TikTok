@@ -13,7 +13,6 @@ API_HASH = os.environ.get("API_HASH", "")
 STRING_SESSION = os.environ.get("STRING_SESSION", "")
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "zapiershorts")
 
-# معالجة BATCH_SIZE بشكل آمن
 batch_size_str = os.environ.get("BATCH_SIZE", "3")
 try:
     BATCH_SIZE = int(batch_size_str) if batch_size_str.strip() else 3
@@ -21,21 +20,23 @@ except ValueError:
     BATCH_SIZE = 3
 
 VIDEO_FOLDER = "Videos"
-LAST_MESSAGE_FILE = "last_message_id.json"
+INDEX_FILE = "last_index.json"          # بدلاً من last_message_id
 # ====================================
 
 def setup_folders():
     Path(VIDEO_FOLDER).mkdir(parents=True, exist_ok=True)
 
-def load_last_message():
-    if os.path.exists(LAST_MESSAGE_FILE):
-        with open(LAST_MESSAGE_FILE) as f:
-            return json.load(f).get("last_message_id", None)
-    return None
+def load_last_index():
+    """تحميل آخر مؤشر تم تحميله (index في القائمة من الأقدم للأحدث)"""
+    if os.path.exists(INDEX_FILE):
+        with open(INDEX_FILE) as f:
+            data = json.load(f)
+            return data.get("last_index", -1)
+    return -1   # -1 يعني لم يسبق تحميل أي شيء
 
-def save_last_message(message_id):
-    with open(LAST_MESSAGE_FILE, "w") as f:
-        json.dump({"last_message_id": message_id}, f)
+def save_last_index(index):
+    with open(INDEX_FILE, "w") as f:
+        json.dump({"last_index": index}, f)
 
 def is_video_file(document):
     if not document:
@@ -58,7 +59,7 @@ def get_file_name(document):
     return None
 
 async def fetch_videos():
-    print("🎬 Telegram Video Fetcher")
+    print("🎬 Telegram Video Fetcher (Index-based)")
     print(f"📦 Batch size: {BATCH_SIZE}")
     print("-" * 40)
 
@@ -67,8 +68,8 @@ async def fetch_videos():
         return
 
     setup_folders()
-    last_id = load_last_message()
-    print(f"📍 Last message ID: {last_id if last_id else 'None (first run)'}")
+    last_idx = load_last_index()
+    print(f"📍 Last downloaded index: {last_idx} ({'no downloads yet' if last_idx == -1 else 'next index = ' + str(last_idx+1)})")
 
     client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
     try:
@@ -78,36 +79,36 @@ async def fetch_videos():
         channel = await client.get_entity(CHANNEL_USERNAME)
         print(f"📢 Channel: {channel.title}")
 
-        # جلب جميع رسائل الفيديو من الأقدم إلى الأحدث
+        # جلب جميع مقاطع الفيديو من الأقدم إلى الأحدث
         print("🔍 Fetching video messages (oldest → newest)...")
         all_videos = []
         async for msg in client.iter_messages(channel, reverse=True):
             if msg.video or (msg.document and is_video_file(msg.document)):
                 all_videos.append(msg)
 
-        print(f"🎬 Total videos in channel: {len(all_videos)}")
+        total = len(all_videos)
+        print(f"🎬 Total videos in channel: {total}")
 
-        if not all_videos:
+        if total == 0:
             print("📭 No videos found.")
             return
 
-        # تحديد الفيديوهات الجديدة بناءً على last_id
-        if last_id is None:
-            # التشغيل الأول: خذ أول BATCH_SIZE (أقدمها)
-            new_videos = all_videos[:BATCH_SIZE]
-        else:
-            # التشغيل التالي: خذ الفيديوهات التي id > last_id (أحدث)
-            new_videos = [v for v in all_videos if v.id > last_id]
-            new_videos = new_videos[:BATCH_SIZE]
-
-        if not new_videos:
-            print("📭 No new videos to download.")
+        # تحديد المقاطع الجديدة بناءً على آخر مؤشر
+        start = last_idx + 1
+        if start >= total:
+            print("📭 No new videos to download (all videos have been downloaded).")
             return
 
-        print(f"📥 Downloading {len(new_videos)} new video(s)...")
+        end = min(start + BATCH_SIZE, total)
+        videos_to_download = all_videos[start:end]
 
-        downloaded_ids = []
-        for idx, msg in enumerate(new_videos, 1):
+        print(f"📥 Downloading {len(videos_to_download)} new video(s) (positions {start+1} to {end})...")
+        print("-" * 40)
+
+        downloaded_count = 0
+        new_last_idx = last_idx
+
+        for i, msg in enumerate(videos_to_download, 1):
             original_name = get_file_name(msg.document) if msg.document else f"video_{msg.id}.mp4"
             if not original_name:
                 original_name = f"video_{msg.id}.mp4"
@@ -117,7 +118,7 @@ async def fetch_videos():
             safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._- ")
             file_path = Path(VIDEO_FOLDER) / safe_name
 
-            print(f"📥 ({idx}/{len(new_videos)}) Downloading: {original_name} (ID: {msg.id})")
+            print(f"📥 ({i}/{len(videos_to_download)}) Downloading: {original_name} (ID: {msg.id})")
             try:
                 if msg.video:
                     await client.download_media(msg.video, str(file_path))
@@ -127,25 +128,27 @@ async def fetch_videos():
                 if file_path.exists() and file_path.stat().st_size > 0:
                     size_mb = file_path.stat().st_size / (1024 * 1024)
                     print(f"✅ Downloaded: {original_name} ({size_mb:.2f} MB)")
-                    downloaded_ids.append(msg.id)
+                    downloaded_count += 1
+                    # تحديث آخر مؤشر ناجح
+                    new_last_idx = start + i - 1
                 else:
                     print(f"❌ Download failed: {original_name}")
                     if file_path.exists():
                         file_path.unlink()
+                    break  # توقف عن التحميل إذا فشل أحدها
             except Exception as e:
                 print(f"⚠️ Error downloading {original_name}: {e}")
+                break
 
-        # تحديث last_id إلى أكبر ID تم تحميله
-        if downloaded_ids:
-            new_last_id = max(downloaded_ids)
-            save_last_message(new_last_id)
-            print(f"📍 Updated last message ID to: {new_last_id}")
+        if downloaded_count > 0:
+            save_last_index(new_last_idx)
+            print(f"📍 Updated last index to: {new_last_idx}")
 
         print("\n" + "="*50)
         print(f"📈 SUMMARY:")
-        print(f"   ✅ Downloaded: {len(downloaded_ids)}")
+        print(f"   ✅ Downloaded: {downloaded_count}")
         print(f"   📁 New videos added to '{VIDEO_FOLDER}/'")
-        print(f"   📍 Last message ID: {load_last_message()}")
+        print(f"   📍 Last index: {load_last_index()} (total downloaded: {load_last_index()+1})")
         print("="*50)
 
     except Exception as e:
