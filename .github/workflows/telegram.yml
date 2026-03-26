@@ -2,7 +2,7 @@ name: Fetch Telegram Videos
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 3 * * *'  # كل يوم الساعة 3 صباحاً
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
           
       - name: Install dependencies
         run: |
-          pip install telethon
+          pip install telethon requests pytz
           
       - name: Run video fetcher
         env:
@@ -35,6 +35,9 @@ jobs:
           STRING_SESSION: ${{ secrets.STRING_SESSION }}
           CHANNEL_USERNAME: ${{ secrets.CHANNEL_USERNAME }}
           BATCH_SIZE: ${{ secrets.BATCH_SIZE }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
         run: |
           python fetch_videos.py
           
@@ -43,19 +46,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # إضافة جميع الملفات المتغيرة (بما فيها last_message_id.json المعدل)
+          # إضافة جميع الملفات المتغيرة
           git add -A
           
-          # التحقق من وجود تغييرات قبل الـ commit
+          # التحقق من وجود تغييرات
           if ! git diff --cached --quiet; then
-            # Commit التغييرات المحلية أولاً
-            git commit -m "Auto: Add new videos from Telegram [$(date +'%Y-%m-%d %H:%M:%S')]"
-            
-            # جلب آخر التغييرات من المستودع البعيد ودمجها
+            git commit -m "Auto: Update videos and RSS [$(date +'%Y-%m-%d %H:%M:%S')]"
             git fetch origin main
             git rebase origin/main || true
-            
-            # دفع التغييرات
             git push origin main
           else
             echo "No new changes to commit"
