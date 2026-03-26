@@ -23,23 +23,27 @@ else:
         BATCH_SIZE = 3
 
 VIDEO_FOLDER = "Videos"
-HISTORY_FILE = "downloaded_videos.json"
+LAST_MESSAGE_FILE = "last_message_id.json"
 # ====================================
 
 def setup_folders():
     Path(VIDEO_FOLDER).mkdir(parents=True, exist_ok=True)
 
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, 'r') as f:
-            return set(json.load(f))
-    return set()
+def load_last_message():
+    """Load last downloaded message ID"""
+    if os.path.exists(LAST_MESSAGE_FILE):
+        with open(LAST_MESSAGE_FILE, 'r') as f:
+            data = json.load(f)
+            return data.get("last_message_id", None)
+    return None
 
-def save_history(history):
-    with open(HISTORY_FILE, 'w') as f:
-        json.dump(list(history), f)
+def save_last_message(message_id):
+    """Save last downloaded message ID"""
+    with open(LAST_MESSAGE_FILE, 'w') as f:
+        json.dump({"last_message_id": message_id}, f)
 
 def is_video_file(document):
+    """Check if document is a video file"""
     if document and document.mime_type:
         if document.mime_type.startswith('video/'):
             return True
@@ -52,6 +56,7 @@ def is_video_file(document):
     return False
 
 def get_file_name(document):
+    """Extract filename from document"""
     if document.attributes:
         for attr in document.attributes:
             if hasattr(attr, 'file_name') and attr.file_name:
@@ -72,9 +77,12 @@ async def fetch_videos():
         return
     
     setup_folders()
-    downloaded = load_history()
+    last_message_id = load_last_message()
     
-    print(f"📊 Already downloaded: {len(downloaded)} videos")
+    if last_message_id:
+        print(f"📍 Last downloaded message ID: {last_message_id}")
+    else:
+        print("📍 First run - will start from the beginning")
     
     client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
     
@@ -86,11 +94,11 @@ async def fetch_videos():
         channel = await client.get_entity(CHANNEL_USERNAME)
         print(f"📢 Channel: {channel.title}")
         
-        print("🔍 Scanning messages for videos (from oldest to newest)...")
+        print("🔍 Scanning messages for videos (from newest to oldest)...")
         
-        # IMPORTANT: Get messages from oldest to newest
+        # Get videos from newest to oldest
         all_videos = []
-        async for message in client.iter_messages(channel, limit=None, offset_id=0, reverse=True):
+        async for message in client.iter_messages(channel, limit=None):
             is_video = False
             if message.video:
                 is_video = True
@@ -106,21 +114,20 @@ async def fetch_videos():
             print("📭 No videos found in channel")
             return
         
-        # Find videos that are NOT in downloaded history
+        # Find videos that are NEWER than last_message_id
         new_videos = []
-        for video in all_videos:
-            # Create the same filename logic to check if already downloaded
-            if video.video:
-                original_filename = f"video_{video.id}.mp4"
-            else:
-                original_filename = get_file_name(video.document) or f"video_{video.id}.mp4"
-            
-            timestamp = video.date.strftime("%Y%m%d_%H%M%S")
-            file_name = f"{video.id}_{timestamp}_{original_filename}"
-            file_name = "".join(c for c in file_name if c.isalnum() or c in '._- ')
-            
-            if file_name not in downloaded:
+        
+        if last_message_id:
+            for video in all_videos:
+                if video.id == last_message_id:
+                    break
                 new_videos.append(video)
+        else:
+            # First run: get all videos
+            new_videos = all_videos
+        
+        # Reverse to get oldest first for downloading
+        new_videos.reverse()
         
         print(f"📊 New videos to download: {len(new_videos)}")
         
@@ -136,6 +143,8 @@ async def fetch_videos():
         print("-" * 40)
         
         downloaded_count = 0
+        last_downloaded_id = None
+        
         for message in videos_to_download:
             if message.video:
                 original_filename = f"video_{message.id}.mp4"
@@ -158,8 +167,8 @@ async def fetch_videos():
                 if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                     size_mb = os.path.getsize(file_path) / (1024 * 1024)
                     print(f"✅ Downloaded: {original_filename} ({size_mb:.2f} MB)")
-                    downloaded.add(file_name)
                     downloaded_count += 1
+                    last_downloaded_id = message.id
                 else:
                     print(f"❌ Download failed: {original_filename}")
                     if os.path.exists(file_path):
@@ -167,15 +176,17 @@ async def fetch_videos():
             except Exception as e:
                 print(f"⚠️ Error: {e}")
         
-        # Save updated history
-        save_history(downloaded)
+        # Update last message ID if we downloaded any
+        if last_downloaded_id:
+            save_last_message(last_downloaded_id)
+            print(f"📍 Updated last message ID to: {last_downloaded_id}")
         
         print("\n" + "="*50)
         print(f"📈 SUMMARY:")
         print(f"   📹 Total videos in channel: {len(all_videos)}")
-        print(f"   📊 Already downloaded: {len(downloaded)}")
         print(f"   ✅ Newly downloaded: {downloaded_count}")
         print(f"   📦 Remaining to download: {len(new_videos) - downloaded_count}")
+        print(f"   📍 Last message ID: {load_last_message()}")
         print("="*50)
         
     except Exception as e:
