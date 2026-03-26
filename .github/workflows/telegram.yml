@@ -2,8 +2,8 @@ name: Fetch Telegram Videos
 
 on:
   schedule:
-    - cron: '0 3 * * *'
-  workflow_dispatch:
+    - cron: '0 3 * * *'  # كل يوم الساعة 3 صباحاً
+  workflow_dispatch:      # للتشغيل اليدوي
 
 permissions:
   contents: write
@@ -43,16 +43,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # تحديث من المستودع البعيد
+          # جلب آخر التغييرات من المستودع البعيد
           git fetch origin main
           git reset --hard origin/main || true
           
-          # إضافة الملفات الجديدة فقط (بدون last_message_id.json)
-          git add Videos/ last_index.json
+          # إضافة المجلد والملف الجديدين
+          git add Videos/ last_message_id.json
           
-          # إنشاء commit إذا كان هناك تغييرات
+          # التحقق من وجود تغييرات قبل الـ commit
           if ! git diff --cached --quiet; then
-            git commit -m "Auto: Add new videos from Telegram [$(date +'%Y-%m-%d')]"
+            git commit -m "Auto: Add new videos from Telegram [$(date +'%Y-%m-%d %H:%M:%S')]"
             git push origin main
           else
             echo "No new changes to commit"
