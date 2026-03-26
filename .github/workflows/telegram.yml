@@ -43,16 +43,19 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # جلب آخر التغييرات
-          git fetch origin main
-          git reset --hard origin/main || true
-          
           # إضافة جميع الملفات المتغيرة (بما فيها last_message_id.json المعدل)
           git add -A
           
-          # التحقق من وجود تغييرات
+          # التحقق من وجود تغييرات قبل الـ commit
           if ! git diff --cached --quiet; then
+            # Commit التغييرات المحلية أولاً
             git commit -m "Auto: Add new videos from Telegram [$(date +'%Y-%m-%d %H:%M:%S')]"
+            
+            # جلب آخر التغييرات من المستودع البعيد ودمجها
+            git fetch origin main
+            git rebase origin/main || true
+            
+            # دفع التغييرات
             git push origin main
           else
             echo "No new changes to commit"
