@@ -1,195 +1,306 @@
-#!/usr/bin/env python3
 import asyncio
 import os
-import json
-from pathlib import Path
+import base64
+import requests
+from xml.dom import minidom
+from xml.etree import ElementTree as ET
 from datetime import datetime
-from telethon import TelegramClient
-from telethon.sessions import StringSession
+import pytz
+import re
 
-# ========== CONFIGURATION ==========
-API_ID = int(os.environ.get("API_ID", 0))
-API_HASH = os.environ.get("API_HASH", "")
-STRING_SESSION = os.environ.get("STRING_SESSION", "")
-CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "zapiershorts")
+# ============================================
+# CONFIGURATION
+# ============================================
+TOKEN = os.environ.get('GITHUB_TOKEN', os.environ.get('PAT_TOKEN', ''))
+REPO = os.environ.get('GITHUB_REPO', 'uploadtiktok/TikTok')
+BRANCH = os.environ.get('GITHUB_BRANCH', 'main')
 
-batch_size_str = os.environ.get("BATCH_SIZE", "3")
-try:
-    BATCH_SIZE = int(batch_size_str) if batch_size_str.strip() else 3
-except ValueError:
-    BATCH_SIZE = 3
+MAX_ITEMS = 3
+VIDEOS_PER_DAY = 3
 
-VIDEO_FOLDER = "Videos"
-LAST_ID_FILE = "last_message_id.json"
-# ====================================
+# ============================================
+# HELPER FUNCTIONS
+# ============================================
+def extract_number(filename):
+    """استخراج الرقم من اسم الملف إذا كان موجوداً"""
+    match = re.search(r'(\d+)', filename)
+    if match:
+        return int(match.group(1))
+    return float('inf')
 
-def setup_folders():
-    Path(VIDEO_FOLDER).mkdir(parents=True, exist_ok=True)
+def clean_title(filename):
+    """
+    تنظيف عنوان المقطع من الأرقام والعلامات غير المرغوب فيها
+    مثال: 72_ما_حكم_من_ينكر_خلافة_علي_بن_أبي_طالب_merged_cleaned.mp4
+    يصبح: ما حكم من ينكر خلافة علي بن أبي طالب
+    """
+    # إزالة الامتداد .mp4
+    title = filename.replace('.mp4', '')
+    
+    # إزالة _merged_cleaned بالكامل (بأي شكل من الأشكال)
+    title = re.sub(r'_merged_cleaned$', '', title)
+    title = re.sub(r'_merged_cleaned_', '_', title)
+    title = re.sub(r'_merged$', '', title)
+    title = re.sub(r'_cleaned$', '', title)
+    
+    # إزالة أي كلمات مكررة مثل _merged أو _cleaned في أي مكان
+    title = re.sub(r'_(?:merged|cleaned|final|edit|v\d+)+', '', title)
+    
+    # إزالة الأرقام في البداية (مثل 72_)
+    title = re.sub(r'^\d+_', '', title)
+    
+    # استبدال الشرطات السفلية المتبقية بمسافات
+    title = title.replace('_', ' ')
+    
+    # إزالة المسافات الزائدة
+    title = re.sub(r'\s+', ' ', title).strip()
+    
+    # إزالة أي كلمة "merged" أو "cleaned" متبقية
+    title = re.sub(r'\bmerged\b', '', title, flags=re.IGNORECASE)
+    title = re.sub(r'\bcleaned\b', '', title, flags=re.IGNORECASE)
+    
+    # إزالة المسافات الزائدة مرة أخرى بعد الحذف
+    title = re.sub(r'\s+', ' ', title).strip()
+    
+    # جعل أول حرف كبير
+    if title:
+        title = title[0].upper() + title[1:] if len(title) > 1 else title.upper()
+    
+    return title if title else filename
 
-def load_last_id():
-    """تحميل آخر message ID تم تحميله"""
-    if os.path.exists(LAST_ID_FILE):
-        try:
-            with open(LAST_ID_FILE, 'r') as f:
-                content = f.read()
-                print(f"DEBUG: Reading {LAST_ID_FILE}, content: {content}")
-                data = json.loads(content)
-                last_id = data.get("last_message_id", None)
-                print(f"DEBUG: Loaded last_message_id = {last_id}")
-                return last_id
-        except Exception as e:
-            print(f"DEBUG: Error reading file: {e}")
+# ============================================
+# GITHUB API FUNCTIONS
+# ============================================
+def gh_api(endpoint, method='GET', data=None):
+    url = f"https://api.github.com/repos/{REPO}/{endpoint}"
+    headers = {
+        'Authorization': f'token {TOKEN}',
+        'Accept': 'application/vnd.github.v3+json'
+    }
+    try:
+        if method == 'GET':
+            r = requests.get(url, headers=headers)
+        elif method == 'DELETE':
+            r = requests.delete(url, headers=headers, json=data)
+        else:
+            r = requests.put(url, headers=headers, json=data)
+        
+        if r.status_code == 404:
             return None
-    else:
-        print(f"DEBUG: File {LAST_ID_FILE} does not exist yet")
-        return None
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ GitHub API Error: {e}")
+        if 'r' in locals():
+            print(f"Response: {r.text}")
+        raise
 
-def save_last_id(message_id):
-    """حفظ آخر message ID تم تحميله"""
-    with open(LAST_ID_FILE, 'w') as f:
-        json.dump({"last_message_id": message_id}, f)
-    print(f"DEBUG: Saved last_message_id = {message_id}")
+def get_gh_file(path):
+    try:
+        res = gh_api(f"contents/{path}")
+        if not res:
+            return None, None
+        content = base64.b64decode(res['content']).decode('utf-8')
+        return content, res['sha']
+    except Exception as e:
+        print(f"⚠️ Could not read {path}: {e}")
+        return None, None
 
-def is_video_file(document):
-    if not document:
-        return False
-    if document.mime_type and document.mime_type.startswith("video/"):
-        return True
-    if document.attributes:
-        for attr in document.attributes:
-            if hasattr(attr, "file_name") and attr.file_name:
-                ext = attr.file_name.lower().split(".")[-1]
-                if ext in ("mp4", "avi", "mov", "mkv", "webm", "flv", "wmv", "m4v"):
-                    return True
-    return False
+def save_gh_file(path, content, msg, sha=None):
+    encoded = base64.b64encode(content.encode('utf-8')).decode('utf-8')
+    data = {'message': msg, 'content': encoded, 'branch': BRANCH}
+    if sha:
+        data['sha'] = sha
+    return gh_api(f"contents/{path}", 'PUT', data)
 
-def get_file_name(document):
-    if document.attributes:
-        for attr in document.attributes:
-            if hasattr(attr, "file_name") and attr.file_name:
-                return attr.file_name
-    return None
+def delete_gh_file(path, sha, msg):
+    data = {'message': msg, 'sha': sha, 'branch': BRANCH}
+    return gh_api(f"contents/{path}", 'DELETE', data)
 
-async def fetch_videos():
-    print("🎬 Telegram Video Fetcher")
-    print(f"📦 Batch size: {BATCH_SIZE}")
-    print("-" * 40)
+def list_videos_in_repo():
+    """جلب قائمة جميع ملفات الفيديو من مجلد Videos في المستودع وترتيبها تصاعدياً"""
+    try:
+        res = gh_api("contents/Videos")
+        if not res:
+            return []
+        # تصفية ملفات mp4 فقط
+        videos = [item['name'] for item in res if item['name'].endswith('.mp4')]
+        
+        # ترتيب آمن: استخراج الأرقام من الأسماء
+        try:
+            videos.sort(key=lambda x: (extract_number(x), x))
+        except Exception as e:
+            print(f"⚠️ Sorting error: {e}, using simple sort")
+            videos.sort()
+        
+        return videos
+    except Exception as e:
+        print(f"❌ Failed to list videos: {e}")
+        return []
 
-    if not (API_ID and API_HASH and STRING_SESSION and CHANNEL_USERNAME):
-        print("❌ Missing secrets")
+# ============================================
+# RSS FUNCTIONS
+# ============================================
+def get_current_rss_filenames():
+    """استخراج أسماء الملفات من RSS الحالي"""
+    content, _ = get_gh_file("rss.xml")
+    if not content:
+        return []
+    
+    filenames = []
+    try:
+        root = ET.fromstring(content)
+        for item in root.findall('.//item'):
+            link = item.find('link').text if item.find('link') is not None else ""
+            enc_node = item.find('enclosure')
+            enc_url = enc_node.get('url') if enc_node is not None else ""
+            video_url = link if link else enc_url
+            if video_url:
+                filename = video_url.split('/')[-1]
+                filenames.append(filename)
+    except Exception as e:
+        print(f"⚠️ Error parsing RSS: {e}")
+    
+    return filenames
+
+def create_empty_rss():
+    """إنشاء ملف RSS فارغ (بدون عناصر)"""
+    # بناء XML فارغ
+    rss = ET.Element('rss', version='2.0')
+    channel = ET.SubElement(rss, 'channel')
+    ET.SubElement(channel, 'title').text = 'مقاطع الفيديو - Shorts'
+    ET.SubElement(channel, 'link').text = f"https://github.com/{REPO}"
+    ET.SubElement(channel, 'language').text = 'ar-sa'
+    ET.SubElement(channel, 'lastBuildDate').text = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
+    ET.SubElement(channel, 'description').text = 'لا توجد مقاطع حالياً'
+
+    xml_str = ET.tostring(rss, encoding='utf-8')
+    dom = minidom.parseString(xml_str)
+    pretty_xml = dom.toprettyxml(indent="  ")
+    clean_xml = "\n".join(line for line in pretty_xml.split('\n') if line.strip())
+
+    _, sha = get_gh_file("rss.xml")
+    save_gh_file("rss.xml", clean_xml, "إفراغ RSS (لا توجد مقاطع)", sha)
+    print("✅ RSS emptied (no videos available)")
+
+def create_new_rss(videos_to_add):
+    """إنشاء ملف RSS جديد يحتوي على المقاطع المحددة مع عناوين نظيفة"""
+    items = []
+    for filename in videos_to_add:
+        # تنظيف العنوان
+        clean_title_text = clean_title(filename)
+        raw_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/Videos/{filename}"
+        pub_date = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
+        items.append({
+            'title': clean_title_text,
+            'video_url': raw_url,
+            'pub_date': pub_date,
+            'original_filename': filename
+        })
+
+    # بناء XML
+    rss = ET.Element('rss', version='2.0')
+    channel = ET.SubElement(rss, 'channel')
+    ET.SubElement(channel, 'title').text = 'مقاطع الفيديو - Shorts'
+    ET.SubElement(channel, 'link').text = f"https://github.com/{REPO}"
+    ET.SubElement(channel, 'language').text = 'ar-sa'
+    ET.SubElement(channel, 'lastBuildDate').text = datetime.now(pytz.timezone('Africa/Algiers')).strftime('%a, %d %b %Y %H:%M:%S +0100')
+
+    for item in items:
+        node = ET.SubElement(channel, 'item')
+        ET.SubElement(node, 'title').text = item['title']
+        ET.SubElement(node, 'link').text = item['video_url']
+        ET.SubElement(node, 'pubDate').text = item['pub_date']
+        ET.SubElement(node, 'enclosure', url=item['video_url'], type='video/mp4')
+        ET.SubElement(node, 'guid', isPermaLink='false').text = item['video_url']
+
+    xml_str = ET.tostring(rss, encoding='utf-8')
+    dom = minidom.parseString(xml_str)
+    pretty_xml = dom.toprettyxml(indent="  ")
+    clean_xml = "\n".join(line for line in pretty_xml.split('\n') if line.strip())
+
+    _, sha = get_gh_file("rss.xml")
+    save_gh_file("rss.xml", clean_xml, f"تحديث RSS - {len(videos_to_add)} مقاطع", sha)
+    print(f"✅ RSS created/updated with {len(videos_to_add)} items")
+    
+    # عرض العناوين النظيفة للتوضيح
+    print("   تنظيف العناوين:")
+    for item in items:
+        print(f"      📝 {item['original_filename']}")
+        print(f"         → {item['title']}")
+
+# ============================================
+# MAIN
+# ============================================
+async def main():
+    if not TOKEN:
+        print("❌ خطأ: TOKEN غير موجود.")
         return
 
-    setup_folders()
-    last_id = load_last_id()
-    
-    if last_id:
-        print(f"📍 Last downloaded message ID: {last_id}")
-        print(f"🔍 Will fetch videos with ID > {last_id}")
-    else:
-        print("📍 First run - fetching oldest videos first")
+    print("🚀 Starting video processing...")
+    print(f"Repository: {REPO}, Branch: {BRANCH}")
 
-    client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
-    try:
-        await client.start()
-        print("✅ Connected to Telegram")
+    # 1. جلب قائمة الفيديوهات من المستودع
+    all_videos = list_videos_in_repo()
+    if not all_videos:
+        print("⚠️ لا توجد مقاطع فيديو في مجلد Videos.")
+        # إذا كان المجلد فارغاً، قم بإفراغ RSS
+        create_empty_rss()
+        return
+    print(f"📹 Found {len(all_videos)} videos in repo")
 
-        channel = await client.get_entity(CHANNEL_USERNAME)
-        print(f"📢 Channel: {channel.title}")
+    # 2. قراءة RSS الحالي
+    current_rss_filenames = get_current_rss_filenames()
+    print(f"📡 Current RSS contains: {len(current_rss_filenames)} items")
 
-        # جلب جميع مقاطع الفيديو من الأقدم إلى الأحدث
-        print("🔍 Fetching video messages (oldest → newest)...")
-        all_videos = []
-        async for msg in client.iter_messages(channel, reverse=True):
-            if msg.video or (msg.document and is_video_file(msg.document)):
-                all_videos.append(msg)
-                print(f"DEBUG: Found video ID: {msg.id}")
-
-        total = len(all_videos)
-        print(f"🎬 Total videos in channel: {total}")
+    # 3. حذف المقاطع الموجودة في RSS من مجلد Videos
+    deleted_count = 0
+    if current_rss_filenames:
+        to_delete = [f for f in current_rss_filenames if f in all_videos]
         
-        # عرض جميع IDs للتصحيح
-        ids_list = [v.id for v in all_videos]
-        print(f"DEBUG: All video IDs: {ids_list}")
-
-        if total == 0:
-            print("📭 No videos found.")
-            return
-
-        # تحديد المقاطع الجديدة
-        if last_id is None:
-            videos_to_download = all_videos[:BATCH_SIZE]
-            print(f"📥 First run: downloading oldest {len(videos_to_download)} videos")
-        else:
-            # فلترة المقاطع التي ID > last_id
-            videos_to_download = []
-            for v in all_videos:
-                if v.id > last_id:
-                    videos_to_download.append(v)
-                    print(f"DEBUG: Video ID {v.id} > {last_id} → will download")
-                else:
-                    print(f"DEBUG: Video ID {v.id} <= {last_id} → skip")
+        if to_delete:
+            print(f"🗑️ سيتم حذف {len(to_delete)} مقطع من مجلد Videos (الموجودة في RSS):")
+            for filename in to_delete:
+                try:
+                    file_info = gh_api(f"contents/Videos/{filename}")
+                    if file_info and 'sha' in file_info:
+                        delete_gh_file(f"Videos/{filename}", file_info['sha'], f"حذف {filename} (خرج من RSS)")
+                        print(f"   🗑️ تم حذف {filename}")
+                        deleted_count += 1
+                except Exception as e:
+                    print(f"   ❌ فشل حذف {filename}: {e}")
             
-            videos_to_download = videos_to_download[:BATCH_SIZE]
-            print(f"📥 Downloading {len(videos_to_download)} new video(s) (ID > {last_id})")
+            # تحديث قائمة الفيديوهات بعد الحذف
+            all_videos = list_videos_in_repo()
+            print(f"📹 Updated: {len(all_videos)} videos remaining")
+        else:
+            print("✅ لا توجد مقاطع في RSS للحذف")
+    else:
+        print("📡 RSS غير موجود أو فارغ")
 
-        if not videos_to_download:
-            print("📭 No new videos to download.")
-            return
+    # 4. إضافة مقاطع جديدة إلى RSS (أول 3 مقاطع متبقية)
+    added_count = 0
+    if all_videos:
+        videos_to_add = all_videos[:VIDEOS_PER_DAY]
+        print(f"\n📌 سيتم إضافة {len(videos_to_add)} مقاطع جديدة إلى RSS")
+        create_new_rss(videos_to_add)
+        added_count = len(videos_to_add)
+    else:
+        # إذا لم يتبق أي مقاطع، قم بإفراغ RSS
+        print("\n📡 لا توجد مقاطع متبقية، سيتم إفراغ RSS")
+        create_empty_rss()
 
-        print("-" * 40)
+    # 5. إحصائيات نهائية
+    remaining_videos = list_videos_in_repo()
+    print(f"\n📊 ملخص:")
+    print(f"   - مقاطع تم حذفها من المجلد: {deleted_count}")
+    print(f"   - مقاطع تمت إضافتها إلى RSS: {added_count}")
+    print(f"   - المقاطع المتبقية في مجلد Videos: {len(remaining_videos)}")
 
-        downloaded_ids = []
-        for i, msg in enumerate(videos_to_download, 1):
-            if msg.video:
-                original_name = f"video_{msg.id}.mp4"
-            else:
-                original_name = get_file_name(msg.document) or f"video_{msg.id}.mp4"
-
-            timestamp = msg.date.strftime("%Y%m%d_%H%M%S")
-            safe_name = f"{msg.id}_{timestamp}_{original_name}"
-            safe_name = "".join(c for c in safe_name if c.isalnum() or c in "._- ")
-            file_path = Path(VIDEO_FOLDER) / safe_name
-
-            print(f"📥 ({i}/{len(videos_to_download)}) Downloading: {original_name} (ID: {msg.id})")
-            try:
-                if msg.video:
-                    await client.download_media(msg.video, str(file_path))
-                else:
-                    await client.download_media(msg.document, str(file_path))
-
-                if file_path.exists() and file_path.stat().st_size > 0:
-                    size_mb = file_path.stat().st_size / (1024 * 1024)
-                    print(f"✅ Downloaded: {original_name} ({size_mb:.2f} MB)")
-                    downloaded_ids.append(msg.id)
-                else:
-                    print(f"❌ Download failed: {original_name}")
-                    if file_path.exists():
-                        file_path.unlink()
-                    break
-            except Exception as e:
-                print(f"⚠️ Error: {e}")
-                break
-
-        # تحديث آخر ID إلى أكبر ID تم تحميله
-        if downloaded_ids:
-            new_last_id = max(downloaded_ids)
-            save_last_id(new_last_id)
-            print(f"📍 Updated last message ID to: {new_last_id}")
-            print(f"   🔗 Example link: https://t.me/{CHANNEL_USERNAME}/{new_last_id}")
-
-        print("\n" + "="*50)
-        print(f"📈 SUMMARY:")
-        print(f"   ✅ Downloaded: {len(downloaded_ids)}")
-        print(f"   📁 Saved in: {VIDEO_FOLDER}/")
-        print(f"   📍 Last message ID: {load_last_id()}")
-        print("="*50)
-
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        raise
-    finally:
-        await client.disconnect()
-        print("👋 Disconnected")
+    if remaining_videos:
+        print(f"   - المقاطع المتبقية: {', '.join(remaining_videos[:5])}...")
+    else:
+        print("   🎉 جميع المقاطع تمت معالجتها! RSS فارغ.")
 
 if __name__ == "__main__":
-    asyncio.run(fetch_videos())
+    asyncio.run(main())
