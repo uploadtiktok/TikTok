@@ -12,7 +12,13 @@ API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 STRING_SESSION = os.environ.get("STRING_SESSION", "")
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "zapiershorts")
-BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "3"))
+
+# معالجة BATCH_SIZE بشكل آمن
+batch_size_str = os.environ.get("BATCH_SIZE", "3")
+try:
+    BATCH_SIZE = int(batch_size_str) if batch_size_str.strip() else 3
+except ValueError:
+    BATCH_SIZE = 3
 
 VIDEO_FOLDER = "Videos"
 LAST_MESSAGE_FILE = "last_message_id.json"
@@ -72,7 +78,7 @@ async def fetch_videos():
         channel = await client.get_entity(CHANNEL_USERNAME)
         print(f"📢 Channel: {channel.title}")
 
-        # Step 1: Get all video messages (oldest first)
+        # جلب جميع رسائل الفيديو من الأقدم إلى الأحدث
         print("🔍 Fetching video messages (oldest → newest)...")
         all_videos = []
         async for msg in client.iter_messages(channel, reverse=True):
@@ -85,14 +91,13 @@ async def fetch_videos():
             print("📭 No videos found.")
             return
 
-        # Step 2: Determine which videos are new (ID > last_id)
+        # تحديد الفيديوهات الجديدة بناءً على last_id
         if last_id is None:
-            # First run: take first BATCH_SIZE videos (oldest)
+            # التشغيل الأول: خذ أول BATCH_SIZE (أقدمها)
             new_videos = all_videos[:BATCH_SIZE]
         else:
-            # Subsequent runs: take videos with ID > last_id
+            # التشغيل التالي: خذ الفيديوهات التي id > last_id (أحدث)
             new_videos = [v for v in all_videos if v.id > last_id]
-            # Limit to BATCH_SIZE
             new_videos = new_videos[:BATCH_SIZE]
 
         if not new_videos:
@@ -130,7 +135,7 @@ async def fetch_videos():
             except Exception as e:
                 print(f"⚠️ Error downloading {original_name}: {e}")
 
-        # Step 3: Update last_id to the maximum ID downloaded in this run
+        # تحديث last_id إلى أكبر ID تم تحميله
         if downloaded_ids:
             new_last_id = max(downloaded_ids)
             save_last_message(new_last_id)
