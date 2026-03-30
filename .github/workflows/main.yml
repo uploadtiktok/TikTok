@@ -1,16 +1,11 @@
-name: Download Short via Tor Proxy
+name: Simple Download without Tor
 
 on:
-  workflow_dispatch: # Allows you to run this manually from the Actions tab
-  push:
-    branches:
-      - main # Optional: runs every time you push to main
+  workflow_dispatch:
 
 jobs:
-  download_job:
+  download:
     runs-on: ubuntu-latest
-    
-    # Critical: Give the action permission to write to your repository
     permissions:
       contents: write
 
@@ -18,48 +13,30 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install System Dependencies (Tor)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tor
-
-      - name: Install Python Dependencies
+      - name: Install Latest yt-dlp
         run: |
           python -m pip install --upgrade pip
-          pip install yt-dlp
-
-      - name: Start Tor Service
-        run: |
-          sudo service tor start
-          # Wait for Tor to bootstrap the circuit (crucial step)
-          echo "Waiting for Tor to connect..."
-          sleep 30 
+          pip install git+https://github.com/yt-dlp/yt-dlp.git # تثبيت نسخة المطورين الأحدث
 
       - name: Run Download Script
         run: python download_short.py
 
-      - name: Debug - List Files
-        run: |
-          echo "Checking if shorts directory exists and listing content:"
-          ls -R shorts || echo "Directory 'shorts' not found!"
-
-      - name: Commit and Push Changes
+      - name: Commit and Push
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Stage the directory
-          git add shorts/ || echo "Nothing to add"
-          
-          # Only commit if there are actual changes to avoid "nothing to commit" error
-          if git diff --cached --quiet; then
-            echo "No changes detected. Skipping push."
-          else
-            git commit -m "System: Auto-downloaded new short via Tor"
+          if [ -d "shorts" ] && [ "$(ls -A shorts)" ]; then
+            git add shorts/
+            git commit -m "Auto-downloaded via GitHub Action"
             git push
           fi
