@@ -1,34 +1,29 @@
 import os
 import subprocess
 
-def download_short(url):
-    output_folder = "shorts"
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-        # Create a hidden .keep file so git recognizes the folder even if empty
-        with open(os.path.join(output_folder, ".keep"), "w") as f:
-            pass
+def download_video(url):
+    output_dir = "shorts"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     command = [
         "yt-dlp",
-        "--proxy", "socks5://127.0.0.1:9050",
-        "-o", f"{output_folder}/%(title)s.%(ext)s",
+        # لا نستخدم بروكسي هنا
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "--no-check-certificates",
+        "--geo-bypass",
+        "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "-o", f"{output_dir}/%(title)s.%(ext)s",
         url
     ]
 
     try:
-        print(f"Downloading: {url}")
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
-        print("Download finished.")
-        
-        # List files to verify
-        files = os.listdir(output_folder)
-        print(f"Files in {output_folder}: {files}")
-        
-    except subprocess.CalledProcessError as e:
-        print(f"Error: {e.stderr}")
+        print(f"Direct download attempt for: {url}")
+        subprocess.run(command, check=True)
+        print("Success!")
+    except subprocess.CalledProcessError:
+        print("Download failed again. YouTube is strictly blocking GitHub IP ranges.")
         exit(1)
 
 if __name__ == "__main__":
-    video_url = "https://youtube.com/shorts/evdWG0GRlfs?si=DmZ9aa5O6CMURlry"
-    download_short(video_url)
+    download_video("https://youtube.com/shorts/evdWG0GRlfs?si=DmZ9aa5O6CMURlry")
