@@ -1,15 +1,19 @@
-name: Download via Tor Proxy
+name: Download Short via Tor Proxy
 
 on:
-  workflow_dispatch: # Allows manual trigger from the Actions tab
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+  push:
+    branches:
+      - main # Optional: runs every time you push to main
 
 jobs:
-  download:
+  download_job:
     runs-on: ubuntu-latest
-    # Granting write permissions to allow the action to push files back to the repo
+    
+    # Critical: Give the action permission to write to your repository
     permissions:
       contents: write
-    
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -19,26 +23,43 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install System Dependencies (Tor)
         run: |
-          pip install yt-dlp
           sudo apt-get update
           sudo apt-get install -y tor
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yt-dlp
 
       - name: Start Tor Service
         run: |
           sudo service tor start
-          # Wait for Tor to establish a circuit
-          sleep 20
+          # Wait for Tor to bootstrap the circuit (crucial step)
+          echo "Waiting for Tor to connect..."
+          sleep 30 
 
-      - name: Execute Python Script
+      - name: Run Download Script
         run: python download_short.py
 
-      - name: Commit and Push to Repository
+      - name: Debug - List Files
+        run: |
+          echo "Checking if shorts directory exists and listing content:"
+          ls -R shorts || echo "Directory 'shorts' not found!"
+
+      - name: Commit and Push Changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add shorts/*
-          # Only commit if there are new files to avoid workflow errors
-          git commit -m "System: Auto-downloaded short via Tor" || echo "No new files to commit"
-          git push
+          
+          # Stage the directory
+          git add shorts/ || echo "Nothing to add"
+          
+          # Only commit if there are actual changes to avoid "nothing to commit" error
+          if git diff --cached --quiet; then
+            echo "No changes detected. Skipping push."
+          else
+            git commit -m "System: Auto-downloaded new short via Tor"
+            git push
+          fi
